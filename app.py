@@ -4,6 +4,9 @@ from datetime import datetime, date
 import hashlib
 from groq import Groq
 from sqlalchemy import create_engine, text
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 st.set_page_config(page_title="BuroAsist", page_icon="📋", layout="wide")
 
@@ -24,11 +27,12 @@ def db_init():
             belge_durumu TEXT DEFAULT 'Bekleniyor',
             ucret INTEGER DEFAULT 0,
             odeme_durumu TEXT DEFAULT 'Ödenmedi',
+            email TEXT DEFAULT '',
             eklenme TEXT)"""))
         conn.execute(text("""CREATE TABLE IF NOT EXISTS beyannameler (
             id SERIAL PRIMARY KEY,
             kullanici_id INTEGER REFERENCES kullanicilar(id),
-            mukellef_id INTEGER REFERENCES mukellefler(id),
+            mukellef_id INTEGER,
             beyanname_turu TEXT,
             son_gun TEXT,
             durum TEXT DEFAULT 'Bekliyor',
@@ -56,14 +60,14 @@ def giris_yap(kullanici_adi, sifre):
             {"k": kullanici_adi, "s": sifre_hashle(sifre)}).fetchone()
     return sonuc
 
-def mukellef_ekle(kullanici_id, isim, vergi_no, telefon, tur, ucret):
+def mukellef_ekle(kullanici_id, isim, vergi_no, telefon, tur, ucret, email):
     with engine.connect() as conn:
         conn.execute(text("""INSERT INTO mukellefler 
-            (kullanici_id,isim,vergi_no,telefon,tur,belge_durumu,ucret,odeme_durumu,eklenme) 
-            VALUES (:ki,:i,:v,:t,:tu,:b,:u,:o,:e)"""),
+            (kullanici_id,isim,vergi_no,telefon,tur,belge_durumu,ucret,odeme_durumu,email,eklenme) 
+            VALUES (:ki,:i,:v,:t,:tu,:b,:u,:o,:em,:e)"""),
             {"ki": kullanici_id, "i": isim, "v": vergi_no, "t": telefon,
              "tu": tur, "b": "Bekleniyor", "u": ucret, "o": "Ödenmedi",
-             "e": datetime.now().strftime("%d.%m.%Y")})
+             "em": email, "e": datetime.now().strftime("%d.%m.%Y")})
         conn.commit()
 
 def liste(kullanici_id):
@@ -121,6 +125,25 @@ def ai_sor(soru):
     )
     return response.choices[0].message.content
 
+def email_gonder(alici, isim):
+    try:
+        gmail_user = st.secrets.get("GMAIL_USER", "")
+        gmail_pass = st.secrets.get("GMAIL_PASSWORD", "")
+        msg = MIMEMultipart()
+        msg["From"] = gmail_user
+        msg["To"] = alici
+        msg["Subject"] = "Belge Hatırlatma — BuroAsist"
+        body = f"Sayın {isim},\n\nBu ayki belgelerinizi henüz almadık.\nLütfen en kısa sürede iletiniz.\n\nTeşekkürler."
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(gmail_user, gmail_pass)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except:
+        return False
+
 if "kullanici" not in st.session_state:
     st.session_state.kullanici = None
 
@@ -162,10 +185,11 @@ else:
         isim = st.text_input("Ad Soyad")
         vno = st.text_input("Vergi No")
         tel = st.text_input("Telefon")
+        email = st.text_input("Email")
         tur = st.selectbox("Tür", ["Şahıs", "Limited", "Anonim"])
         ucret = st.number_input("Aylık Ücret (TL)", min_value=0, value=1500)
         if st.button("Ekle") and isim:
-            mukellef_ekle(kullanici_id, isim, vno, tel, tur, ucret)
+            mukellef_ekle(kullanici_id, isim, vno, tel, tur, ucret, email)
             st.rerun()
         st.divider()
         if st.button("Çıkış Yap"):
@@ -176,19 +200,18 @@ else:
 
     df = liste(kullanici_id)
 
-    # ANA METRİKLER
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Toplam Mükellef", len(df))
     c2.metric("⚠️ Belge Bekleyen", len(df[df.belge_durumu=="Bekleniyor"]) if not df.empty else 0)
     c3.metric("✅ Belge Gelen", len(df[df.belge_durumu=="Geldi"]) if not df.empty else 0)
-    toplam_gelir = df["ucret"].sum() if not df.empty else 0
-    odenen = df[df.odeme_durumu=="Ödendi"]["ucret"].sum() if not df.empty else 0
+    toplam_gelir = int(df["ucret"].sum()) if not df.empty else 0
+    odenen = int(df[df.odeme_durumu=="Ödendi"]["ucret"].sum()) if not df.empty else 0
     c4.metric("💰 Aylık Gelir", f"{toplam_gelir:,} TL")
     c5.metric("❌ Tahsil Edilmedi", f"{toplam_gelir - odenen:,} TL")
 
     st.divider()
 
-    t1, t2, t3, t4, t5 = st.tabs(["📊 Mükellefler", "💰 Ücret Takibi", "📅 Beyanname", "📱 WhatsApp", "🤖 AI Asistan"])
+    t1, t2, t3, t4, t5 = st.tabs(["📊 Mükellefler", "💰 Ücret Takibi", "📅 Beyanname", "📱 WhatsApp & Email", "🤖 AI Asistan"])
 
     with t1:
         if not df.empty:
@@ -221,16 +244,15 @@ else:
         if not df.empty:
             odenmemis = df[df.odeme_durumu=="Ödenmedi"]
             odenmis = df[df.odeme_durumu=="Ödendi"]
-            
             col1, col2 = st.columns(2)
             with col1:
-                st.error(f"❌ Ödenmemiş: {len(odenmemis)} mükellef — {odenmemis['ucret'].sum():,} TL")
+                st.error(f"❌ Ödenmemiş: {len(odenmemis)} mükellef — {int(odenmemis['ucret'].sum()):,} TL")
                 for _, r in odenmemis.iterrows():
-                    st.write(f"• **{r.isim}** — {r.ucret:,} TL — {r.telefon}")
+                    st.write(f"• **{r.isim}** — {int(r.ucret):,} TL — {r.telefon}")
             with col2:
-                st.success(f"✅ Ödendi: {len(odenmis)} mükellef — {odenmis['ucret'].sum():,} TL")
+                st.success(f"✅ Ödendi: {len(odenmis)} mükellef — {int(odenmis['ucret'].sum()):,} TL")
                 for _, r in odenmis.iterrows():
-                    st.write(f"• **{r.isim}** — {r.ucret:,} TL")
+                    st.write(f"• **{r.isim}** — {int(r.ucret):,} TL")
         else:
             st.info("Mükellef yok")
 
@@ -261,13 +283,19 @@ else:
                 st.divider()
 
     with t4:
-        st.subheader("📱 Belge Hatırlatma Mesajları")
+        st.subheader("📱 Belge Hatırlatma")
         if not df.empty:
             bek = df[df.belge_durumu=="Bekleniyor"]
             if not bek.empty:
                 for _, r in bek.iterrows():
                     st.warning(f"📞 {r.isim} — {r.telefon}")
                     st.code(f"Sayın {r.isim}, bu ayki belgelerinizi henüz almadık. Lütfen en kısa sürede iletiniz. Teşekkürler.")
+                    if r.email:
+                        if st.button(f"📧 Email Gönder — {r.isim}", key=f"em{r.id}"):
+                            if email_gonder(r.email, r.isim):
+                                st.success("Email gönderildi!")
+                            else:
+                                st.error("Email gönderilemedi. Gmail ayarlarını kontrol et.")
                     st.divider()
             else:
                 st.success("✅ Tüm mükelleflerden belge geldi!")
