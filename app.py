@@ -156,6 +156,19 @@ h2, h3 {
     border: 1.5px solid #e0dbd3 !important;
     border-radius: 10px !important;
     font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #1a1a2e !important;
+}
+.stSelectbox > div > div > div,
+.stSelectbox [data-baseweb="select"] span,
+.stSelectbox [data-baseweb="select"] div {
+    color: #1a1a2e !important;
+}
+/* Dropdown liste seçenekleri */
+[data-baseweb="popover"] li,
+[data-baseweb="popover"] div,
+[data-baseweb="menu"] li {
+    color: #1a1a2e !important;
+    background: white !important;
 }
 
 /* ── Butonlar ── */
