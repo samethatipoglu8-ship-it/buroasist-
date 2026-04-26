@@ -3,36 +3,23 @@ import pandas as pd
 from datetime import datetime, date
 import hashlib
 import plotly.graph_objects as go
-import plotly.express as px
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from io import BytesIO
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 from groq import Groq
 from supabase import create_client
 
 st.set_page_config(page_title="BuroAsist", page_icon="📋", layout="wide")
 
-# ── Stil ──────────────────────────────────────────────────────────────────────
+# ── Mobil uyum CSS ────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-.metric-card {
-    background: #f8f9fa;
-    border-radius: 12px;
-    padding: 16px 20px;
-    border-left: 4px solid #4f8ef7;
-    margin-bottom: 8px;
-}
-.metric-card.red  { border-left-color: #e53e3e; }
-.metric-card.green{ border-left-color: #38a169; }
-.metric-card.orange{ border-left-color: #dd6b20; }
-.alert-box {
-    background: #fff5f5;
-    border: 1px solid #feb2b2;
-    border-radius: 10px;
-    padding: 12px 16px;
-    margin-bottom: 6px;
-    font-size: 14px;
-}
-.alert-box.warn {
-    background: #fffaf0;
-    border-color: #fbd38d;
+@media (max-width: 768px) {
+    .block-container { padding: 1rem !important; }
+    div[data-testid="column"] { min-width: 100% !important; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -40,16 +27,16 @@ st.markdown("""
 # ── Bağlantılar ───────────────────────────────────────────────────────────────
 groq_client = Groq(api_key=st.secrets.get("GROQ_API_KEY", ""))
 sb = create_client(st.secrets.get("SUPABASE_URL", ""), st.secrets.get("SUPABASE_KEY", ""))
+GMAIL_USER = st.secrets.get("GMAIL_USER", "")
+GMAIL_PASS = st.secrets.get("GMAIL_PASSWORD", "")
 
-# ── Yardımcı fonksiyonlar ─────────────────────────────────────────────────────
+# ── DB fonksiyonları ──────────────────────────────────────────────────────────
 def hashle(s):
     return hashlib.sha256(s.encode()).hexdigest()
 
 def kayit_ol(adi, sifre, buro):
     sb.table("kullanicilar").insert({
-        "kullanici_adi": adi,
-        "sifre": hashle(sifre),
-        "buro_adi": buro
+        "kullanici_adi": adi, "sifre": hashle(sifre), "buro_adi": buro
     }).execute()
     return True
 
@@ -88,11 +75,9 @@ def b_liste(kid):
     if not r.data:
         for ad, gun in [("KDV", 28), ("Muhtasar", 26), ("SGK", 23), ("Damga Vergisi", 26)]:
             sb.table("beyannameler").insert({
-                "kullanici_id": kid,
-                "beyanname_turu": ad,
+                "kullanici_id": kid, "beyanname_turu": ad,
                 "son_gun": f"{bugun.year}-{bugun.month:02d}-{gun:02d}",
-                "durum": "Bekliyor",
-                "ay": ay
+                "durum": "Bekliyor", "ay": ay
             }).execute()
         r = sb.table("beyannameler").select("*").eq("kullanici_id", kid).eq("ay", ay).execute()
     return pd.DataFrame(r.data) if r.data else pd.DataFrame()
@@ -110,7 +95,58 @@ def ai_sor(soru):
     )
     return r.choices[0].message.content
 
-# ── Gelir grafiği (son 6 ay Supabase'den) ─────────────────────────────────────
+# ── E-posta ───────────────────────────────────────────────────────────────────
+def mail_gonder(alici, konu, mesaj):
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = GMAIL_USER
+        msg["To"] = alici
+        msg["Subject"] = konu
+        msg.attach(MIMEText(mesaj, "plain", "utf-8"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+            s.login(GMAIL_USER, GMAIL_PASS)
+            s.send_message(msg)
+        return True
+    except Exception as e:
+        return str(e)
+
+# ── PDF makbuz ────────────────────────────────────────────────────────────────
+def pdf_makbuz(buro_adi, isim, ucret, ay):
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    c.setFont("Helvetica-Bold", 20)
+    c.drawCentredString(w/2, h-60, "UCRET MAKBUZU")
+    c.setFont("Helvetica", 13)
+    c.drawCentredString(w/2, h-85, buro_adi)
+    c.line(50, h-100, w-50, h-100)
+    c.setFont("Helvetica", 12)
+    for s, y in [
+        (f"Mukellef : {isim}", h-140),
+        (f"Donem    : {ay}", h-168),
+        (f"Tutar    : {int(ucret):,} TL", h-196),
+        (f"Tarih    : {date.today().strftime('%d.%m.%Y')}", h-224),
+        ("Odeme yapilmistir. Tesekkurler.", h-270),
+    ]:
+        c.drawString(60, y, s)
+    c.line(50, h-290, w-50, h-290)
+    c.setFont("Helvetica", 10)
+    c.drawCentredString(w/2, h-315, "Bu makbuz BuroAsist tarafindan olusturulmustur.")
+    c.save()
+    buf.seek(0)
+    return buf
+
+# ── Excel raporu ──────────────────────────────────────────────────────────────
+def excel_raporu(df):
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        ozet = df[["isim","tur","ucret","odeme_durumu","belge_durumu","eklenme"]].copy()
+        ozet.columns = ["Ad Soyad","Tur","Aylik Ucret","Odeme","Belge","Eklenme"]
+        ozet.to_excel(writer, index=False, sheet_name="Mukellefler")
+    buf.seek(0)
+    return buf
+
+# ── Gelir grafiği ─────────────────────────────────────────────────────────────
 def gelir_grafigi(kid):
     r = sb.table("mukellefler").select("ucret,odeme_durumu,eklenme").eq("kullanici_id", kid).execute()
     if not r.data:
@@ -127,21 +163,18 @@ def gelir_grafigi(kid):
     ozet = ozet[ozet["ay"].isin(aylar)]
     odendi   = ozet[ozet["odeme_durumu"]=="Ödendi"].set_index("ay")["ucret"]
     odenmedi = ozet[ozet["odeme_durumu"]=="Ödenmedi"].set_index("ay")["ucret"]
-    # Ay etiketlerini Türkçe göster
     ay_etiket = {a: datetime.strptime(a, "%Y-%m").strftime("%b %Y") for a in aylar}
     fig = go.Figure()
-    fig.add_bar(x=[ay_etiket[a] for a in aylar], y=[odendi.get(a,0) for a in aylar],   name="Tahsil Edildi",  marker_color="#38a169")
-    fig.add_bar(x=[ay_etiket[a] for a in aylar], y=[odenmedi.get(a,0) for a in aylar], name="Tahsil Edilmedi", marker_color="#e53e3e")
+    fig.add_bar(x=[ay_etiket[a] for a in aylar], y=[odendi.get(a,0) for a in aylar],
+                name="Tahsil Edildi", marker_color="#38a169")
+    fig.add_bar(x=[ay_etiket[a] for a in aylar], y=[odenmedi.get(a,0) for a in aylar],
+                name="Tahsil Edilmedi", marker_color="#e53e3e")
     fig.update_layout(
-        barmode="group",
-        title="Son 6 Ay Gelir Durumu (TL)",
-        xaxis_title="Ay",
-        yaxis_title="TL",
-        height=300,
+        barmode="group", title="Son 6 Ay Gelir Durumu (TL)",
+        xaxis_title="Ay", yaxis_title="TL", height=300,
         margin=dict(l=20, r=20, t=40, b=20),
         legend=dict(orientation="h", y=1.1),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
+        plot_bgcolor="white", paper_bgcolor="white",
         font=dict(color="#333333"),
     )
     fig.update_xaxes(showgrid=False, tickfont=dict(color="#333333"))
@@ -152,14 +185,9 @@ def gelir_grafigi(kid):
 def kritik_uyarilar(df, bdf):
     uyarilar = []
     bugun = date.today()
-
-    # Belge bekleyen mükellefler
     if not df.empty:
-        bek = df[df.belge_durumu == "Bekleniyor"]
-        for _, r in bek.iterrows():
-            uyarilar.append(("red", f"📁 Belge bekleniyor: <b>{r.isim}</b>"))
-
-    # Yaklaşan beyannameler (≤5 gün)
+        for _, r in df[df.belge_durumu=="Bekleniyor"].iterrows():
+            uyarilar.append(("red", f"📁 Belge bekleniyor: **{r.isim}**"))
     if not bdf.empty:
         for _, r in bdf.iterrows():
             try:
@@ -167,9 +195,9 @@ def kritik_uyarilar(df, bdf):
                 kalan = (sg - bugun).days
                 if r.durum == "Bekliyor":
                     if kalan < 0:
-                        uyarilar.append(("red", f"⛔ <b>{r.beyanname_turu}</b> beyannamesi süresi geçti!"))
+                        uyarilar.append(("red", f"⛔ **{r.beyanname_turu}** beyannamesi süresi geçti!"))
                     elif kalan <= 5:
-                        uyarilar.append(("warn", f"⚠️ <b>{r.beyanname_turu}</b> son gün: {sg.strftime('%d.%m.%Y')} ({kalan} gün kaldı)"))
+                        uyarilar.append(("warn", f"⚠️ **{r.beyanname_turu}** son gün: {sg.strftime('%d.%m.%Y')} ({kalan} gün kaldı)"))
             except Exception:
                 continue
     return uyarilar
@@ -184,7 +212,6 @@ if "kullanici" not in st.session_state:
 if st.session_state.kullanici is None:
     st.title("📋 BuroAsist")
     g, k = st.tabs(["Giriş Yap", "Kayıt Ol"])
-
     with g:
         adi   = st.text_input("Kullanıcı Adı", key="g_adi")
         sifre = st.text_input("Şifre", type="password", key="g_sifre")
@@ -195,16 +222,15 @@ if st.session_state.kullanici is None:
                 st.rerun()
             else:
                 st.error("Kullanıcı adı veya şifre yanlış!")
-
     with k:
-        buro  = st.text_input("Büro Adı")
-        yadi  = st.text_input("Kullanıcı Adı", key="k_adi")
-        ysifre= st.text_input("Şifre", type="password", key="k_sifre")
+        buro   = st.text_input("Büro Adı")
+        yadi   = st.text_input("Kullanıcı Adı", key="k_adi")
+        ysifre = st.text_input("Şifre", type="password", key="k_sifre")
         if st.button("Kayıt Ol"):
             if kayit_ol(yadi, ysifre, buro):
-                st.success("Hesap oluşturuldu! Giriş yapabilirsiniz.")
+                st.success("Hesap oluşturuldu!")
             else:
-                st.error("Kayıt başarısız. Tekrar deneyin.")
+                st.error("Kayıt başarısız.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ANA EKRAN
@@ -213,7 +239,6 @@ else:
     kid      = st.session_state.kullanici["id"]
     buro_adi = st.session_state.kullanici["buro_adi"]
 
-    # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
         st.write(f"👤 **{buro_adi}**")
         st.caption(f"📅 {date.today().strftime('%d.%m.%Y')}")
@@ -233,81 +258,125 @@ else:
             st.session_state.kullanici = None
             st.rerun()
 
-    # ── Başlık ────────────────────────────────────────────────────────────────
     st.title(f"📋 BuroAsist — {buro_adi}")
-
-    # ── Veri ─────────────────────────────────────────────────────────────────
     df  = m_liste(kid)
     bdf = b_liste(kid)
 
-    # ── Metrikler ─────────────────────────────────────────────────────────────
-    toplam  = int(df["ucret"].sum()) if not df.empty else 0
-    odendi  = int(df[df.odeme_durumu=="Ödendi"]["ucret"].sum()) if not df.empty else 0
-    bek_cnt = len(df[df.belge_durumu=="Bekleniyor"]) if not df.empty else 0
-    gel_cnt = len(df[df.belge_durumu=="Geldi"]) if not df.empty else 0
+    toplam   = int(df["ucret"].sum()) if not df.empty else 0
+    odendi_t = int(df[df.odeme_durumu=="Ödendi"]["ucret"].sum()) if not df.empty else 0
+    bek_cnt  = len(df[df.belge_durumu=="Bekleniyor"]) if not df.empty else 0
+    gel_cnt  = len(df[df.belge_durumu=="Geldi"]) if not df.empty else 0
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("👥 Toplam Mükellef",    len(df))
-    c2.metric("📁 Belge Bekleyen",     bek_cnt,  delta=f"-{bek_cnt}" if bek_cnt else None, delta_color="inverse")
-    c3.metric("✅ Belge Gelen",        gel_cnt)
-    c4.metric("💰 Tahsil Edildi",      f"{odendi:,} TL")
-    c5.metric("❌ Tahsil Edilmedi",    f"{toplam-odendi:,} TL",
-              delta=f"-{toplam-odendi:,} TL" if (toplam-odendi) else None, delta_color="inverse")
+    c1.metric("👥 Toplam Mükellef", len(df))
+    c2.metric("📁 Belge Bekleyen",  bek_cnt, delta=f"-{bek_cnt}" if bek_cnt else None, delta_color="inverse")
+    c3.metric("✅ Belge Gelen",     gel_cnt)
+    c4.metric("💰 Tahsil Edildi",   f"{odendi_t:,} TL")
+    c5.metric("❌ Tahsil Edilmedi", f"{toplam-odendi_t:,} TL",
+              delta=f"-{toplam-odendi_t:,} TL" if (toplam-odendi_t) else None, delta_color="inverse")
 
     st.divider()
 
-    # ── Grafik + Uyarılar ─────────────────────────────────────────────────────
     col_grafik, col_uyari = st.columns([3, 2])
-
     with col_grafik:
         fig = gelir_grafigi(kid)
         if fig:
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Grafik için henüz yeterli veri yok.")
-
     with col_uyari:
         st.subheader("🚨 Kritik Uyarılar")
         uyarilar = kritik_uyarilar(df, bdf)
         if uyarilar:
             for tip, mesaj in uyarilar:
-                # HTML taglerini temizle
-                temiz = mesaj.replace("<b>","**").replace("</b>","**")
-                if tip == "red":
-                    st.error(temiz)
-                else:
-                    st.warning(temiz)
+                if tip == "red": st.error(mesaj)
+                else: st.warning(mesaj)
         else:
             st.success("✅ Kritik uyarı yok.")
 
     st.divider()
 
-    # ── Sekmeler ──────────────────────────────────────────────────────────────
-    t1, t2, t3, t4, t5 = st.tabs(["📊 Mükellefler", "💰 Ücret Takibi", "📅 Beyanname", "📱 WhatsApp", "🤖 AI Asistan"])
+    t1, t2, t3, t4, t5, t6 = st.tabs([
+        "📊 Mükellefler", "💰 Ücret Takibi", "📅 Beyanname",
+        "📱 WhatsApp", "📈 Rapor", "🤖 AI Asistan"
+    ])
 
     # ── T1: Mükellefler ───────────────────────────────────────────────────────
     with t1:
         if not df.empty:
             for _, r in df.iterrows():
-                a, b, c, d, e, f = st.columns([3,1,2,2,2,1])
-                a.write(f"**{r.isim}**")
-                b.write(r.tur)
-                c.write(r.telefon)
-                with d:
-                    sec = st.selectbox("Belge", ["Bekleniyor","Geldi"],
-                                       index=0 if r.belge_durumu=="Bekleniyor" else 1,
-                                       key=f"d{r.id}")
-                    if sec != r.belge_durumu:
-                        m_belge(r.id, sec); st.rerun()
-                with e:
-                    ode = st.selectbox("Ödeme", ["Ödenmedi","Ödendi"],
-                                       index=0 if r.odeme_durumu=="Ödenmedi" else 1,
-                                       key=f"o{r.id}")
-                    if ode != r.odeme_durumu:
-                        m_odeme(r.id, ode); st.rerun()
-                with f:
-                    if st.button("🗑️", key=f"s{r.id}"):
-                        m_sil(r.id); st.rerun()
+                with st.expander(f"{'🟡' if r.belge_durumu=='Bekleniyor' else '🟢'} {r.isim} — {r.tur} — {int(r.ucret):,} TL"):
+                    # Detaylar
+                    c1, c2 = st.columns(2)
+                    c1.markdown(f"📞 **Telefon:** {r.telefon}")
+                    c1.markdown(f"📧 **Email:** {r.email if r.email else '—'}")
+                    c2.markdown(f"🔢 **Vergi No:** {r.vergi_no if r.vergi_no else '—'}")
+                    c2.markdown(f"📅 **Eklenme:** {r.eklenme}")
+                    st.divider()
+
+                    # Durum güncelle + sil
+                    d1, d2, d3 = st.columns([2,2,1])
+                    with d1:
+                        sec = st.selectbox("📁 Belge", ["Bekleniyor","Geldi"],
+                                           index=0 if r.belge_durumu=="Bekleniyor" else 1,
+                                           key=f"d{r.id}")
+                        if sec != r.belge_durumu:
+                            m_belge(r.id, sec); st.rerun()
+                    with d2:
+                        ode = st.selectbox("💰 Ödeme", ["Ödenmedi","Ödendi"],
+                                           index=0 if r.odeme_durumu=="Ödenmedi" else 1,
+                                           key=f"o{r.id}")
+                        if ode != r.odeme_durumu:
+                            m_odeme(r.id, ode); st.rerun()
+                    with d3:
+                        st.write(""); st.write("")
+                        if st.button("🗑️ Sil", key=f"s{r.id}", use_container_width=True):
+                            m_sil(r.id); st.rerun()
+
+                    # Dosya yükleme (adım 10)
+                    st.divider()
+                    st.markdown("**📎 Dosya Yükle**")
+                    yukle = st.file_uploader(
+                        "PDF veya görsel yükle",
+                        type=["pdf","png","jpg","jpeg"],
+                        key=f"f{r.id}"
+                    )
+                    if yukle:
+                        dosya_bytes = yukle.read()
+                        dosya_yolu  = f"belgeler/{kid}/{r.id}/{yukle.name}"
+                        try:
+                            sb.storage.from_("belgeler").upload(
+                                dosya_yolu, dosya_bytes,
+                                {"content-type": yukle.type, "upsert": "true"}
+                            )
+                            st.success(f"✅ {yukle.name} yüklendi!")
+                        except Exception as e:
+                            st.error(f"Hata: {e}")
+
+                    # Mail gönder (adım 3)
+                    if r.email:
+                        st.divider()
+                        st.markdown("**📧 Mail Gönder**")
+                        mail_konu = st.text_input("Konu", value="Belge Hatırlatması", key=f"mk{r.id}")
+                        mail_msg  = st.text_area("Mesaj",
+                            value=f"Sayın {r.isim}, bu ayki belgelerinizi henüz almadık. Lütfen iletiniz.",
+                            key=f"mm{r.id}")
+                        if st.button("📨 Gönder", key=f"mg{r.id}"):
+                            sonuc = mail_gonder(r.email, mail_konu, mail_msg)
+                            if sonuc is True: st.success("✅ Mail gönderildi!")
+                            else: st.error(f"Hata: {sonuc}")
+
+                    # PDF makbuz (adım 4)
+                    st.divider()
+                    ay_str  = date.today().strftime("%B %Y")
+                    pdf_buf = pdf_makbuz(buro_adi, r.isim, r.ucret, ay_str)
+                    st.download_button(
+                        label="🧾 PDF Makbuz İndir",
+                        data=pdf_buf,
+                        file_name=f"makbuz_{r.isim.replace(' ','_')}.pdf",
+                        mime="application/pdf",
+                        key=f"pdf{r.id}"
+                    )
         else:
             st.info("Henüz mükellef eklenmedi.")
 
@@ -341,9 +410,9 @@ else:
                 a.write(f"**{r.beyanname_turu}**")
                 b.write(sg.strftime("%d.%m.%Y"))
                 with c:
-                    if kalan < 0:        st.error("⛔ Geçti")
-                    elif kalan <= 3:     st.warning(f"⚠️ {kalan} gün")
-                    else:                st.success(f"✅ {kalan} gün")
+                    if kalan < 0:    st.error("⛔ Geçti")
+                    elif kalan <= 3: st.warning(f"⚠️ {kalan} gün")
+                    else:            st.success(f"✅ {kalan} gün")
                 with d:
                     yeni = st.selectbox("", ["Bekliyor","Gönderildi"],
                                         index=0 if r.durum=="Bekliyor" else 1,
@@ -367,8 +436,39 @@ else:
         else:
             st.info("Mükellef yok")
 
-    # ── T5: AI Asistan ───────────────────────────────────────────────────────
+    # ── T5: Rapor ─────────────────────────────────────────────────────────────
     with t5:
+        st.subheader("📈 Aylık Gelir Raporu")
+        if not df.empty:
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Toplam Potansiyel", f"{toplam:,} TL")
+            col2.metric("Tahsil Edildi",     f"{odendi_t:,} TL")
+            col3.metric("Tahsil Edilmedi",   f"{toplam-odendi_t:,} TL")
+            st.divider()
+            fig2 = go.Figure(data=[go.Pie(
+                labels=["Tahsil Edildi","Tahsil Edilmedi"],
+                values=[odendi_t, toplam-odendi_t],
+                marker_colors=["#38a169","#e53e3e"],
+                hole=0.4
+            )])
+            fig2.update_layout(height=300, margin=dict(l=20,r=20,t=20,b=20), paper_bgcolor="white")
+            st.plotly_chart(fig2, use_container_width=True)
+            st.divider()
+            goster = df[["isim","tur","ucret","odeme_durumu","belge_durumu"]].copy()
+            goster.columns = ["Ad Soyad","Tür","Aylık Ücret","Ödeme","Belge"]
+            st.dataframe(goster, use_container_width=True)
+            exc = excel_raporu(df)
+            st.download_button(
+                label="📥 Excel Olarak İndir",
+                data=exc,
+                file_name=f"buroasist_{date.today().strftime('%Y%m')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("Henüz veri yok.")
+
+    # ── T6: AI Asistan ───────────────────────────────────────────────────────
+    with t6:
         st.subheader("🤖 Mevzuat ve Vergi Asistanı")
         if "mesajlar" not in st.session_state:
             st.session_state.mesajlar = []
