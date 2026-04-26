@@ -926,8 +926,21 @@ else:
             # WhatsApp şablonları
             st.markdown("### 📱 WhatsApp Şablonları")
             for _, r in whatsapp_hedef.iterrows():
-                st.warning(f"📞 **{r.isim}** — {r.telefon}")
-                st.code(f"Sayın {r.isim}, bu ayki belgelerinizi henüz almadık. Lütfen en kısa sürede iletiniz. Teşekkürler, {buro_adi}")
+                tel_goster = r.telefon if r.telefon else "—"
+                st.markdown(f"""
+                <div style='background:#e7fce8; border:1px solid #b7dfb9; border-radius:10px; padding:0.8rem 1rem; margin-bottom:0.5rem; display:flex; align-items:center; gap:0.7rem;'>
+                    <span style='font-size:1.3rem;'>📱</span>
+                    <div>
+                        <div style='font-weight:700; color:#1a1a2e; font-size:0.95rem;'>{r.isim}</div>
+                        <div style='color:#444; font-size:0.82rem;'>📞 {tel_goster}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                mesaj_wa = f"Sayın {r.isim}, bu ayki belgelerinizi henüz almadık. Lütfen en kısa sürede iletiniz. Teşekkürler, {buro_adi}"
+                st.code(mesaj_wa)
+                tel_link = str(tel_goster).replace(" ", "").replace("-", "")
+                if tel_link and tel_link != "—":
+                    st.markdown(f"[📲 WhatsApp'ta Aç](https://wa.me/90{tel_link.lstrip('0')}?text={mesaj_wa.replace(' ', '%20')})", unsafe_allow_html=False)
                 st.divider()
         else:
             st.info("Mükellef yok")
