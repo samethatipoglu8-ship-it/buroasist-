@@ -3,118 +3,103 @@ import pandas as pd
 from datetime import datetime, date
 import hashlib
 from groq import Groq
-from sqlalchemy import create_engine, text
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from supabase import create_client
 
 st.set_page_config(page_title="BuroAsist", page_icon="📋", layout="wide")
 
 client = Groq(api_key=st.secrets.get("GROQ_API_KEY", ""))
-db_url = st.secrets.get("DATABASE_URL", "").replace("postgresql://", "postgresql+pg8000://")
-engine = create_engine(db_url)
-
-def db_init():
-    with engine.connect() as conn:
-        conn.execute(text("""CREATE TABLE IF NOT EXISTS kullanicilar (
-            id SERIAL PRIMARY KEY,
-            kullanici_adi TEXT UNIQUE NOT NULL,
-            sifre TEXT NOT NULL,
-            buro_adi TEXT)"""))
-        conn.execute(text("""CREATE TABLE IF NOT EXISTS mukellefler (
-            id SERIAL PRIMARY KEY,
-            kullanici_id INTEGER REFERENCES kullanicilar(id),
-            isim TEXT, vergi_no TEXT, telefon TEXT, tur TEXT,
-            belge_durumu TEXT DEFAULT 'Bekleniyor',
-            ucret INTEGER DEFAULT 0,
-            odeme_durumu TEXT DEFAULT 'Ödenmedi',
-            email TEXT DEFAULT '',
-            eklenme TEXT)"""))
-        conn.execute(text("""CREATE TABLE IF NOT EXISTS beyannameler (
-            id SERIAL PRIMARY KEY,
-            kullanici_id INTEGER REFERENCES kullanicilar(id),
-            mukellef_id INTEGER,
-            beyanname_turu TEXT,
-            son_gun TEXT,
-            durum TEXT DEFAULT 'Bekliyor',
-            ay TEXT)"""))
-        conn.commit()
-
-db_init()
+supabase = create_client(
+    st.secrets.get("SUPABASE_URL", ""),
+    st.secrets.get("SUPABASE_KEY", "")
+)
 
 def sifre_hashle(sifre):
     return hashlib.sha256(sifre.encode()).hexdigest()
 
 def kayit_ol(kullanici_adi, sifre, buro_adi):
     try:
-        with engine.connect() as conn:
-            conn.execute(text("INSERT INTO kullanicilar (kullanici_adi, sifre, buro_adi) VALUES (:k, :s, :b)"),
-                {"k": kullanici_adi, "s": sifre_hashle(sifre), "b": buro_adi})
-            conn.commit()
+        supabase.table("kullanicilar").insert({
+            "kullanici_adi": kullanici_adi,
+            "sifre": sifre_hashle(sifre),
+            "buro_adi": buro_adi
+        }).execute()
         return True
     except:
         return False
 
 def giris_yap(kullanici_adi, sifre):
-    with engine.connect() as conn:
-        sonuc = conn.execute(text("SELECT id, buro_adi FROM kullanicilar WHERE kullanici_adi=:k AND sifre=:s"),
-            {"k": kullanici_adi, "s": sifre_hashle(sifre)}).fetchone()
-    return sonuc
+    sonuc = supabase.table("kullanicilar")\
+        .select("*")\
+        .eq("kullanici_adi", kullanici_adi)\
+        .eq("sifre", sifre_hashle(sifre))\
+        .execute()
+    if sonuc.data:
+        return sonuc.data[0]
+    return None
 
 def mukellef_ekle(kullanici_id, isim, vergi_no, telefon, tur, ucret, email):
-    with engine.connect() as conn:
-        conn.execute(text("""INSERT INTO mukellefler 
-            (kullanici_id,isim,vergi_no,telefon,tur,belge_durumu,ucret,odeme_durumu,email,eklenme) 
-            VALUES (:ki,:i,:v,:t,:tu,:b,:u,:o,:em,:e)"""),
-            {"ki": kullanici_id, "i": isim, "v": vergi_no, "t": telefon,
-             "tu": tur, "b": "Bekleniyor", "u": ucret, "o": "Ödenmedi",
-             "em": email, "e": datetime.now().strftime("%d.%m.%Y")})
-        conn.commit()
+    supabase.table("mukellefler").insert({
+        "kullanici_id": kullanici_id,
+        "isim": isim,
+        "vergi_no": vergi_no,
+        "telefon": telefon,
+        "tur": tur,
+        "ucret": ucret,
+        "email": email,
+        "belge_durumu": "Bekleniyor",
+        "odeme_durumu": "Ödenmedi",
+        "eklenme": datetime.now().strftime("%d.%m.%Y")
+    }).execute()
 
 def liste(kullanici_id):
-    with engine.connect() as conn:
-        df = pd.read_sql(text("SELECT * FROM mukellefler WHERE kullanici_id=:k"), conn, params={"k": kullanici_id})
-    return df
+    sonuc = supabase.table("mukellefler")\
+        .select("*")\
+        .eq("kullanici_id", kullanici_id)\
+        .execute()
+    if sonuc.data:
+        return pd.DataFrame(sonuc.data)
+    return pd.DataFrame()
 
 def guncelle(mid, durum):
-    with engine.connect() as conn:
-        conn.execute(text("UPDATE mukellefler SET belge_durumu=:d WHERE id=:i"), {"d": durum, "i": mid})
-        conn.commit()
+    supabase.table("mukellefler").update({"belge_durumu": durum}).eq("id", mid).execute()
 
 def odeme_guncelle(mid, durum):
-    with engine.connect() as conn:
-        conn.execute(text("UPDATE mukellefler SET odeme_durumu=:d WHERE id=:i"), {"d": durum, "i": mid})
-        conn.commit()
-
-def beyanname_guncelle(bid, durum):
-    with engine.connect() as conn:
-        conn.execute(text("UPDATE beyannameler SET durum=:d WHERE id=:i"), {"d": durum, "i": bid})
-        conn.commit()
+    supabase.table("mukellefler").update({"odeme_durumu": durum}).eq("id", mid).execute()
 
 def sil(mid):
-    with engine.connect() as conn:
-        conn.execute(text("DELETE FROM mukellefler WHERE id=:i"), {"i": mid})
-        conn.commit()
+    supabase.table("mukellefler").delete().eq("id", mid).execute()
 
 def beyanname_listesi(kullanici_id):
     bugun = date.today()
     ay = bugun.strftime("%Y-%m")
-    with engine.connect() as conn:
-        mevcut = conn.execute(text("SELECT COUNT(*) FROM beyannameler WHERE kullanici_id=:k AND ay=:a"),
-            {"k": kullanici_id, "a": ay}).fetchone()[0]
-        if mevcut == 0:
-            for bt in [("KDV", f"{bugun.year}-{bugun.month:02d}-28"),
-                       ("Muhtasar", f"{bugun.year}-{bugun.month:02d}-26"),
-                       ("SGK", f"{bugun.year}-{bugun.month:02d}-23"),
-                       ("Damga Vergisi", f"{bugun.year}-{bugun.month:02d}-26")]:
-                conn.execute(text("""INSERT INTO beyannameler 
-                    (kullanici_id, beyanname_turu, son_gun, durum, ay)
-                    VALUES (:k,:b,:s,'Bekliyor',:a)"""),
-                    {"k": kullanici_id, "b": bt[0], "s": bt[1], "a": ay})
-            conn.commit()
-        df = pd.read_sql(text("SELECT * FROM beyannameler WHERE kullanici_id=:k AND ay=:a"),
-            conn, params={"k": kullanici_id, "a": ay})
-    return df
+    sonuc = supabase.table("beyannameler")\
+        .select("*")\
+        .eq("kullanici_id", kullanici_id)\
+        .eq("ay", ay)\
+        .execute()
+    if not sonuc.data:
+        for bt in [
+            ("KDV", f"{bugun.year}-{bugun.month:02d}-28"),
+            ("Muhtasar", f"{bugun.year}-{bugun.month:02d}-26"),
+            ("SGK", f"{bugun.year}-{bugun.month:02d}-23"),
+            ("Damga Vergisi", f"{bugun.year}-{bugun.month:02d}-26")
+        ]:
+            supabase.table("beyannameler").insert({
+                "kullanici_id": kullanici_id,
+                "beyanname_turu": bt[0],
+                "son_gun": bt[1],
+                "durum": "Bekliyor",
+                "ay": ay
+            }).execute()
+        sonuc = supabase.table("beyannameler")\
+            .select("*")\
+            .eq("kullanici_id", kullanici_id)\
+            .eq("ay", ay)\
+            .execute()
+    return pd.DataFrame(sonuc.data) if sonuc.data else pd.DataFrame()
+
+def beyanname_guncelle(bid, durum):
+    supabase.table("beyannameler").update({"durum": durum}).eq("id", bid).execute()
 
 def ai_sor(soru):
     response = client.chat.completions.create(
@@ -125,25 +110,6 @@ def ai_sor(soru):
         ]
     )
     return response.choices[0].message.content
-
-def email_gonder(alici, isim):
-    try:
-        gmail_user = st.secrets.get("GMAIL_USER", "")
-        gmail_pass = st.secrets.get("GMAIL_PASSWORD", "")
-        msg = MIMEMultipart()
-        msg["From"] = gmail_user
-        msg["To"] = alici
-        msg["Subject"] = "Belge Hatırlatma — BuroAsist"
-        body = f"Sayın {isim},\n\nBu ayki belgelerinizi henüz almadık.\nLütfen en kısa sürede iletiniz.\n\nTeşekkürler."
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(gmail_user, gmail_pass)
-        server.send_message(msg)
-        server.quit()
-        return True
-    except:
-        return False
 
 if "kullanici" not in st.session_state:
     st.session_state.kullanici = None
@@ -159,7 +125,7 @@ if st.session_state.kullanici is None:
         if st.button("Giriş Yap"):
             sonuc = giris_yap(k_adi, k_sifre)
             if sonuc:
-                st.session_state.kullanici = {"id": sonuc[0], "buro_adi": sonuc[1], "adi": k_adi}
+                st.session_state.kullanici = {"id": sonuc["id"], "buro_adi": sonuc["buro_adi"], "adi": k_adi}
                 st.rerun()
             else:
                 st.error("Kullanıcı adı veya şifre yanlış!")
@@ -198,7 +164,6 @@ else:
             st.rerun()
 
     st.title(f"📋 BuroAsist — {buro_adi}")
-
     df = liste(kullanici_id)
 
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -212,7 +177,7 @@ else:
 
     st.divider()
 
-    t1, t2, t3, t4, t5 = st.tabs(["📊 Mükellefler", "💰 Ücret Takibi", "📅 Beyanname", "📱 WhatsApp & Email", "🤖 AI Asistan"])
+    t1, t2, t3, t4, t5 = st.tabs(["📊 Mükellefler", "💰 Ücret Takibi", "📅 Beyanname", "📱 WhatsApp", "🤖 AI Asistan"])
 
     with t1:
         if not df.empty:
@@ -291,12 +256,6 @@ else:
                 for _, r in bek.iterrows():
                     st.warning(f"📞 {r.isim} — {r.telefon}")
                     st.code(f"Sayın {r.isim}, bu ayki belgelerinizi henüz almadık. Lütfen en kısa sürede iletiniz. Teşekkürler.")
-                    if r.email:
-                        if st.button(f"📧 Email Gönder — {r.isim}", key=f"em{r.id}"):
-                            if email_gonder(r.email, r.isim):
-                                st.success("Email gönderildi!")
-                            else:
-                                st.error("Email gönderilemedi. Gmail ayarlarını kontrol et.")
                     st.divider()
             else:
                 st.success("✅ Tüm mükelleflerden belge geldi!")
