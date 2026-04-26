@@ -21,22 +21,30 @@ st.markdown("""
 /* ── Global reset ── */
 html, body, [class*="css"] {
     font-family: 'Plus Jakarta Sans', sans-serif;
-    color: #1a1a2e;
 }
 
-/* ── Tüm yazılar koyu renk ── */
-p, span, div, li, td, th, label, a, h1, h2, h3, h4, h5, h6,
-.stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown div,
+/* ── Ana içerik yazı rengi (sidebar ve butonlar hariç) ── */
+.main p, .main span:not(button span), .main li, .main td, .main th,
+.main label, .main h1, .main h2, .main h3, .main h4,
 [data-testid="stMarkdownContainer"] p,
-[data-testid="stMarkdownContainer"] span,
+[data-testid="stMarkdownContainer"] li,
 [data-testid="stText"] {
     color: #1a1a2e !important;
 }
 
-/* ── White bg elementlerde yazı koyu kalsın ── */
-.streamlit-expanderContent *,
-[data-testid="stForm"] *,
-[data-testid="stExpander"] * {
+/* ── Buton yazıları beyaz kalsın ── */
+.stButton button, .stButton button span,
+.stButton button p, .stButton button div {
+    color: white !important;
+}
+.stDownloadButton button, .stDownloadButton button span {
+    color: #1a1a2e !important;
+}
+
+/* ── Chat mesajları ── */
+[data-testid="stChatMessage"] p,
+[data-testid="stChatMessage"] span,
+[data-testid="stChatMessage"] div {
     color: #1a1a2e !important;
 }
 
