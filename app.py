@@ -204,12 +204,28 @@ h2, h3 {
     font-family: 'Plus Jakarta Sans', sans-serif !important;
     font-weight: 500 !important;
     font-size: 0.85rem !important;
-    color: #666 !important;
+    color: #444 !important;
     padding: 0.5rem 1rem !important;
+    background: transparent !important;
+}
+.stTabs [data-baseweb="tab"] * {
+    color: #444 !important;
 }
 .stTabs [aria-selected="true"] {
     background: #1a1a2e !important;
     color: white !important;
+}
+.stTabs [aria-selected="true"] * {
+    color: white !important;
+}
+
+/* ── Sidebar input label'ları ── */
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stTextInput label,
+[data-testid="stSidebar"] .stNumberInput label,
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] p {
+    color: #a8a8c8 !important;
 }
 
 /* ── Expander ── */
