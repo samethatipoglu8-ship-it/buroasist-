@@ -400,7 +400,7 @@ def mb_ekle(kid, mukellef_id, tur, ay, son_gun, durum, not_):
     sb.table("mukellef_beyanname").insert({
         "kullanici_id": kid, "mukellef_id": mukellef_id,
         "beyanname_turu": tur, "ay": ay, "son_gun": son_gun,
-        "durum": durum, "not": not_
+        "durum": durum, "aciklama": not_
     }).execute()
 
 def gorev_liste(kid):
@@ -774,8 +774,8 @@ else:
                     st.markdown("**📅 Beyanname Geçmişi**")
                     mbd = mb_liste(kid, r.id)
                     if not mbd.empty:
-                        st.dataframe(mbd[["ay","beyanname_turu","son_gun","durum","not"]].rename(columns={
-                            "ay":"Ay","beyanname_turu":"Tür","son_gun":"Son Gün","durum":"Durum","not":"Not"
+                        st.dataframe(mbd[["ay","beyanname_turu","son_gun","durum","aciklama"]].rename(columns={
+                            "ay":"Ay","beyanname_turu":"Tür","son_gun":"Son Gün","durum":"Durum","aciklama":"Not"
                         }), use_container_width=True)
                     with st.form(key=f"mbf{r.id}"):
                         fc1, fc2, fc3 = st.columns(3)
