@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import hashlib
 import plotly.graph_objects as go
 import smtplib
@@ -43,7 +43,7 @@ def giris(adi, sifre):
     r = sb.table("kullanicilar").select("*").eq("kullanici_adi", adi).eq("sifre", hashle(sifre)).execute()
     return r.data[0] if r.data else None
 
-def m_ekle(kid, isim, vno, tel, tur, ucret, email, defter_turu, efatura, sozlesme_tarihi):
+def m_ekle(kid, isim, vno, tel, tur, ucret, email, defter_turu, efatura, sozlesme_tarihi, stopaj_orani, babs):
     sb.table("mukellefler").insert({
         "kullanici_id": kid, "isim": isim, "vergi_no": vno,
         "telefon": tel, "tur": tur, "ucret": ucret, "email": email,
@@ -52,13 +52,15 @@ def m_ekle(kid, isim, vno, tel, tur, ucret, email, defter_turu, efatura, sozlesm
         "defter_turu": defter_turu,
         "efatura": efatura,
         "sozlesme_tarihi": sozlesme_tarihi,
+        "stopaj_orani": stopaj_orani,
+        "babs": babs,
     }).execute()
 
 def m_liste(kid):
     r = sb.table("mukellefler").select("*").eq("kullanici_id", kid).execute()
     cols = ["id","kullanici_id","isim","vergi_no","telefon","tur",
             "belge_durumu","ucret","odeme_durumu","email","eklenme",
-            "defter_turu","efatura","sozlesme_tarihi"]
+            "defter_turu","efatura","sozlesme_tarihi","stopaj_orani","babs"]
     return pd.DataFrame(r.data) if r.data else pd.DataFrame(columns=cols)
 
 def m_belge(mid, durum):
@@ -87,7 +89,6 @@ def b_liste_genel(kid):
 def b_guncelle(bid, durum):
     sb.table("beyannameler").update({"durum": durum}).eq("id", bid).execute()
 
-# Mükellef bazlı beyanname
 def mb_liste(kid, mukellef_id):
     r = sb.table("mukellef_beyanname").select("*").eq("kullanici_id", kid).eq("mukellef_id", mukellef_id).order("ay", desc=True).execute()
     return pd.DataFrame(r.data) if r.data else pd.DataFrame()
@@ -99,7 +100,6 @@ def mb_ekle(kid, mukellef_id, tur, ay, son_gun, durum, not_):
         "durum": durum, "not": not_
     }).execute()
 
-# Görevler
 def gorev_liste(kid):
     r = sb.table("gorevler").select("*").eq("kullanici_id", kid).order("son_gun").execute()
     return pd.DataFrame(r.data) if r.data else pd.DataFrame()
@@ -117,7 +117,6 @@ def gorev_tamamla(gid):
 def gorev_sil(gid):
     sb.table("gorevler").delete().eq("id", gid).execute()
 
-# Borç takibi
 def borc_liste(kid, mukellef_id):
     r = sb.table("borc_takip").select("*").eq("kullanici_id", kid).eq("mukellef_id", mukellef_id).order("son_odeme").execute()
     return pd.DataFrame(r.data) if r.data else pd.DataFrame()
@@ -138,6 +137,7 @@ def ai_sor(soru):
     )
     return r.choices[0].message.content
 
+# ── Mail ──────────────────────────────────────────────────────────────────────
 def mail_gonder(alici, konu, mesaj):
     try:
         msg = MIMEMultipart()
@@ -152,6 +152,19 @@ def mail_gonder(alici, konu, mesaj):
     except Exception as e:
         return str(e)
 
+def toplu_mail_gonder(df, konu, mesaj_sablonu):
+    basarili, basarisiz = [], []
+    hedefler = df[(df.belge_durumu == "Bekleniyor") & (df.email.notna()) & (df.email != "")]
+    for _, r in hedefler.iterrows():
+        mesaj = mesaj_sablonu.replace("{isim}", r.isim)
+        sonuc = mail_gonder(r.email, konu, mesaj)
+        if sonuc is True:
+            basarili.append(r.isim)
+        else:
+            basarisiz.append(f"{r.isim} ({sonuc})")
+    return basarili, basarisiz
+
+# ── PDF makbuz ────────────────────────────────────────────────────────────────
 def pdf_makbuz(buro_adi, isim, ucret, ay):
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -220,12 +233,17 @@ def gelir_grafigi(kid):
     fig.update_yaxes(gridcolor="#f0f0f0", tickfont=dict(color="#333333"))
     return fig
 
+# ── Kritik uyarılar ───────────────────────────────────────────────────────────
 def kritik_uyarilar(df, bdf):
     uyarilar = []
     bugun = date.today()
+
+    # Belge bekleyenler
     if not df.empty:
         for _, r in df[df.belge_durumu=="Bekleniyor"].iterrows():
             uyarilar.append(("red", f"📁 Belge bekleniyor: **{r.isim}**"))
+
+    # Beyanname yaklaşanlar
     if not bdf.empty:
         for _, r in bdf.iterrows():
             try:
@@ -238,6 +256,32 @@ def kritik_uyarilar(df, bdf):
                         uyarilar.append(("warn", f"⚠️ **{r.beyanname_turu}** son gün: {sg.strftime('%d.%m.%Y')} ({kalan} gün kaldı)"))
             except Exception:
                 continue
+
+    # Geçici vergi uyarısı (Nisan, Ağustos, Kasım, Şubat)
+    gecici_vergi_aylari = [4, 8, 11, 2]
+    if bugun.month in gecici_vergi_aylari and bugun.day >= 14:
+        uyarilar.append(("warn", "📊 **Geçici Vergi** beyanname dönemi — kontrol et!"))
+
+    # Ba/Bs uyarısı (her ayın 5'inden sonra)
+    if bugun.day >= 5 and not df.empty:
+        babs_var = df[df.get("babs", pd.Series()) == "Evet"] if "babs" in df.columns else pd.DataFrame()
+        if not babs_var.empty:
+            uyarilar.append(("warn", f"📋 **Ba/Bs formu** bekliyor: {len(babs_var)} mükellef"))
+
+    # Sözleşme yenileme (30 gün içinde dolacak)
+    if not df.empty and "sozlesme_tarihi" in df.columns:
+        for _, r in df.iterrows():
+            try:
+                if r.sozlesme_tarihi:
+                    st_date = datetime.strptime(r.sozlesme_tarihi, "%d.%m.%Y").date()
+                    # Bir yıl sonrası
+                    yenileme = st_date.replace(year=st_date.year + 1)
+                    kalan = (yenileme - bugun).days
+                    if 0 <= kalan <= 30:
+                        uyarilar.append(("warn", f"📝 **{r.isim}** sözleşme yenileme: {kalan} gün kaldı"))
+            except Exception:
+                continue
+
     return uyarilar
 
 # ── Session state ─────────────────────────────────────────────────────────────
@@ -289,10 +333,12 @@ else:
         tur             = st.selectbox("Tür", ["Şahıs", "Limited", "Anonim"])
         defter_turu     = st.selectbox("Defter Türü", ["İşletme Defteri", "Bilanço"])
         efatura         = st.selectbox("E-Fatura", ["Hayır", "Evet"])
+        babs            = st.selectbox("Ba/Bs Yükümlüsü", ["Hayır", "Evet"])
+        stopaj_orani    = st.selectbox("Stopaj Oranı", ["Yok", "%10", "%15", "%20", "%25"])
         sozlesme_tarihi = st.text_input("Sözleşme Tarihi (gg.aa.yyyy)")
         ucret           = st.number_input("Aylık Ücret (TL)", min_value=0, value=1500)
         if st.button("➕ Ekle", use_container_width=True) and isim:
-            m_ekle(kid, isim, vno, tel, tur, ucret, email, defter_turu, efatura, sozlesme_tarihi)
+            m_ekle(kid, isim, vno, tel, tur, ucret, email, defter_turu, efatura, sozlesme_tarihi, stopaj_orani, babs)
             st.rerun()
         st.divider()
         if st.button("🚪 Çıkış", use_container_width=True):
@@ -339,16 +385,33 @@ else:
 
     t1, t2, t3, t4, t5, t6, t7 = st.tabs([
         "📊 Mükellefler", "📋 Görevler", "💰 Ücret Takibi",
-        "📅 Beyanname", "📱 WhatsApp", "📈 Rapor", "🤖 AI Asistan"
+        "📅 Beyanname", "📱 Toplu Mail", "📈 Rapor", "🤖 AI Asistan"
     ])
 
     # ── T1: Mükellefler ───────────────────────────────────────────────────────
     with t1:
-        if not df.empty:
-            for _, r in df.iterrows():
+        # Arama/filtre
+        ara = st.text_input("🔍 Mükellef ara...", placeholder="İsim veya vergi no")
+        fcol1, fcol2, fcol3 = st.columns(3)
+        f_tur    = fcol1.selectbox("Tür", ["Tümü","Şahıs","Limited","Anonim"])
+        f_belge  = fcol2.selectbox("Belge", ["Tümü","Bekleniyor","Geldi"])
+        f_odeme  = fcol3.selectbox("Ödeme", ["Tümü","Ödenmedi","Ödendi"])
+
+        gdf = df.copy()
+        if ara:
+            gdf = gdf[gdf.isim.str.contains(ara, case=False, na=False) |
+                      gdf.vergi_no.astype(str).str.contains(ara, na=False)]
+        if f_tur   != "Tümü": gdf = gdf[gdf.tur == f_tur]
+        if f_belge != "Tümü": gdf = gdf[gdf.belge_durumu == f_belge]
+        if f_odeme != "Tümü": gdf = gdf[gdf.odeme_durumu == f_odeme]
+
+        st.caption(f"{len(gdf)} mükellef gösteriliyor")
+        st.divider()
+
+        if not gdf.empty:
+            for _, r in gdf.iterrows():
                 with st.expander(f"{'🟡' if r.belge_durumu=='Bekleniyor' else '🟢'} {r.isim} — {r.tur} — {int(r.ucret):,} TL"):
 
-                    # Temel bilgiler
                     c1, c2, c3 = st.columns(3)
                     c1.markdown(f"📞 **Telefon:** {r.telefon}")
                     c1.markdown(f"📧 **Email:** {r.get('email','') or '—'}")
@@ -356,12 +419,12 @@ else:
                     c2.markdown(f"📅 **Eklenme:** {r.eklenme}")
                     c3.markdown(f"📒 **Defter:** {r.get('defter_turu','—') or '—'}")
                     c3.markdown(f"🧾 **E-Fatura:** {r.get('efatura','—') or '—'}")
+                    c3.markdown(f"📋 **Ba/Bs:** {r.get('babs','—') or '—'}")
+                    c3.markdown(f"✂️ **Stopaj:** {r.get('stopaj_orani','—') or '—'}")
                     if r.get('sozlesme_tarihi'):
-                        c3.markdown(f"📝 **Sözleşme:** {r.sozlesme_tarihi}")
+                        c1.markdown(f"📝 **Sözleşme:** {r.sozlesme_tarihi}")
 
                     st.divider()
-
-                    # Durum güncelle
                     d1, d2, d3 = st.columns([2,2,1])
                     with d1:
                         sec = st.selectbox("📁 Belge", ["Bekleniyor","Geldi"],
@@ -390,7 +453,7 @@ else:
                         }), use_container_width=True)
                     with st.form(key=f"mbf{r.id}"):
                         fc1, fc2, fc3 = st.columns(3)
-                        mb_tur = fc1.selectbox("Tür", ["KDV","Muhtasar","SGK","Damga Vergisi","Geçici Vergi","Stopaj","Diğer"])
+                        mb_tur = fc1.selectbox("Tür", ["KDV","Muhtasar","SGK","Damga Vergisi","Geçici Vergi","Stopaj","Ba/Bs","Diğer"])
                         mb_ay  = fc2.text_input("Ay (yyyy-mm)", value=date.today().strftime("%Y-%m"))
                         mb_sg  = fc3.text_input("Son Gün (yyyy-mm-dd)", value=date.today().strftime("%Y-%m-28"))
                         mb_dur = st.selectbox("Durum", ["Bekliyor","Gönderildi","Gecikti"])
@@ -409,7 +472,7 @@ else:
                         }), use_container_width=True)
                     with st.form(key=f"bf{r.id}"):
                         bc1, bc2, bc3 = st.columns(3)
-                        b_tur  = bc1.selectbox("Borç Türü", ["KDV Borcu","SGK Borcu","Gelir Vergisi","Kurumlar Vergisi","Diğer"])
+                        b_tur  = bc1.selectbox("Borç Türü", ["KDV Borcu","SGK Borcu","Gelir Vergisi","Kurumlar Vergisi","Geçici Vergi","Diğer"])
                         b_tut  = bc2.number_input("Tutar (TL)", min_value=0)
                         b_sg   = bc3.text_input("Son Ödeme (yyyy-mm-dd)")
                         b_dur  = st.selectbox("Durum", ["Ödenmedi","Ödendi","Taksitli"])
@@ -458,14 +521,12 @@ else:
                         key=f"pdf{r.id}"
                     )
         else:
-            st.info("Henüz mükellef eklenmedi.")
+            st.info("Mükellef bulunamadı.")
 
     # ── T2: Görevler ──────────────────────────────────────────────────────────
     with t2:
         st.subheader("📋 Görev & Hatırlatma")
         bugun = date.today()
-
-        # Yeni görev ekle
         with st.form("gorev_form"):
             gc1, gc2, gc3, gc4 = st.columns([3,2,2,1])
             g_baslik   = gc1.text_input("Görev")
@@ -479,9 +540,8 @@ else:
         st.divider()
         gorevler = gorev_liste(kid)
         if not gorevler.empty:
-            bekleyenler = gorevler[gorevler.tamamlandi == False]
+            bekleyenler   = gorevler[gorevler.tamamlandi == False]
             tamamlananlar = gorevler[gorevler.tamamlandi == True]
-
             st.markdown("**⏳ Bekleyen Görevler**")
             for _, r in bekleyenler.iterrows():
                 gc1, gc2, gc3, gc4, gc5 = st.columns([3,2,1,1,1])
@@ -489,16 +549,15 @@ else:
                 gc2.write(r.mukellef_adi or "—")
                 try:
                     kalan = (date.fromisoformat(r.son_gun) - bugun).days
-                    if kalan < 0: gc3.error(f"⛔ {abs(kalan)}g geçti")
+                    if kalan < 0:    gc3.error(f"⛔ {abs(kalan)}g geçti")
                     elif kalan == 0: gc3.warning("⚠️ Bugün!")
-                    else: gc3.success(f"✅ {kalan}g")
+                    else:            gc3.success(f"✅ {kalan}g")
                 except:
                     gc3.write(r.son_gun)
-                oncelik_renk = {"Yüksek":"🔴","Orta":"🟡","Düşük":"🟢"}.get(r.oncelik, "⚪")
+                oncelik_renk = {"Yüksek":"🔴","Orta":"🟡","Düşük":"🟢"}.get(r.oncelik,"⚪")
                 gc4.write(f"{oncelik_renk} {r.oncelik}")
                 if gc5.button("✓", key=f"gt{r.id}"):
                     gorev_tamamla(r.id); st.rerun()
-
             if not tamamlananlar.empty:
                 st.divider()
                 st.markdown("**✅ Tamamlananlar**")
@@ -551,18 +610,43 @@ else:
                         b_guncelle(r.id, yeni); st.rerun()
                 st.divider()
 
-    # ── T5: WhatsApp ─────────────────────────────────────────────────────────
+    # ── T5: Toplu Mail ────────────────────────────────────────────────────────
     with t5:
-        st.subheader("📱 Belge Hatırlatma")
+        st.subheader("📱 Toplu Mail & WhatsApp")
+
         if not df.empty:
             bek = df[df.belge_durumu=="Bekleniyor"]
-            if not bek.empty:
-                for _, r in bek.iterrows():
-                    st.warning(f"📞 {r.isim} — {r.telefon}")
-                    st.code(f"Sayın {r.isim}, bu ayki belgelerinizi henüz almadık. Lütfen en kısa sürede iletiniz. Teşekkürler.")
-                    st.divider()
-            else:
-                st.success("✅ Tüm mükelleflerden belge geldi!")
+            mail_hedef = bek[bek.email.notna() & (bek.email != "")]
+            whatsapp_hedef = bek
+
+            st.info(f"📬 Belge bekleyen **{len(bek)}** mükellef var. Mail gönderilebilecek: **{len(mail_hedef)}**")
+            st.divider()
+
+            # Toplu mail
+            st.markdown("### 📧 Toplu Mail Gönder")
+            toplu_konu = st.text_input("Mail Konusu", value="Belge Hatırlatması — " + date.today().strftime("%B %Y"))
+            toplu_mesaj = st.text_area("Mail Şablonu ({isim} otomatik değişir)",
+                value="Sayın {isim},\n\nBu ayki belgelerinizi henüz almadık. Lütfen en kısa sürede büromuza iletiniz.\n\nTeşekkürler,\n" + buro_adi,
+                height=150)
+            if st.button("📨 Tümüne Mail Gönder", use_container_width=True):
+                if len(mail_hedef) == 0:
+                    st.warning("Mail adresi olan mükellef yok.")
+                else:
+                    with st.spinner(f"{len(mail_hedef)} kişiye mail gönderiliyor..."):
+                        basarili, basarisiz = toplu_mail_gonder(df, toplu_konu, toplu_mesaj)
+                    if basarili:
+                        st.success(f"✅ Gönderildi: {', '.join(basarili)}")
+                    if basarisiz:
+                        st.error(f"❌ Başarısız: {', '.join(basarisiz)}")
+
+            st.divider()
+
+            # WhatsApp şablonları
+            st.markdown("### 📱 WhatsApp Şablonları")
+            for _, r in whatsapp_hedef.iterrows():
+                st.warning(f"📞 **{r.isim}** — {r.telefon}")
+                st.code(f"Sayın {r.isim}, bu ayki belgelerinizi henüz almadık. Lütfen en kısa sürede iletiniz. Teşekkürler, {buro_adi}")
+                st.divider()
         else:
             st.info("Mükellef yok")
 
@@ -575,6 +659,16 @@ else:
             col2.metric("Tahsil Edildi",     f"{odendi_t:,} TL")
             col3.metric("Tahsil Edilmedi",   f"{toplam-odendi_t:,} TL")
             st.divider()
+
+            # E-fatura durumu
+            if "efatura" in df.columns:
+                ef_evet = len(df[df.efatura=="Evet"])
+                ef_hayir = len(df[df.efatura=="Hayır"])
+                ec1, ec2 = st.columns(2)
+                ec1.metric("🧾 E-Fatura Mükellefi", ef_evet)
+                ec2.metric("📄 E-Fatura Dışı", ef_hayir)
+            st.divider()
+
             fig2 = go.Figure(data=[go.Pie(
                 labels=["Tahsil Edildi","Tahsil Edilmedi"],
                 values=[odendi_t, toplam-odendi_t],
@@ -584,6 +678,7 @@ else:
             fig2.update_layout(height=300, margin=dict(l=20,r=20,t=20,b=20), paper_bgcolor="white")
             st.plotly_chart(fig2, use_container_width=True)
             st.divider()
+
             goster = df[["isim","tur","ucret","odeme_durumu","belge_durumu"]].copy()
             goster.columns = ["Ad Soyad","Tür","Aylık Ücret","Ödeme","Belge"]
             st.dataframe(goster, use_container_width=True)
