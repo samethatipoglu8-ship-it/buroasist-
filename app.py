@@ -14,11 +14,12 @@ def hashle(s):
     return hashlib.sha256(s.encode()).hexdigest()
 
 def kayit_ol(adi, sifre, buro):
-    try:
-        sb.table("kullanicilar").insert({"kullanici_adi": adi, "sifre": hashle(sifre), "buro_adi": buro}).execute()
-        return True
-    except:
-        return False
+    sb.table("kullanicilar").insert({
+        "kullanici_adi": adi,
+        "sifre": hashle(sifre),
+        "buro_adi": buro
+    }).execute()
+    return True
 
 def giris(adi, sifre):
     r = sb.table("kullanicilar").select("*").eq("kullanici_adi", adi).eq("sifre", hashle(sifre)).execute()
