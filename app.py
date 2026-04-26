@@ -222,12 +222,14 @@ h2, h3 {
 
 /* ── Chat ── */
 [data-testid="stChatMessage"] {
+    color: #1a1a2e !important;
     border-radius: 12px !important;
     background: white !important;
     border: 1px solid #e8e4de !important;
     margin-bottom: 0.5rem !important;
 }
 .stChatInputContainer {
+    color: #1a1a2e !important;
     border-radius: 12px !important;
     border: 1.5px solid #e0dbd3 !important;
     background: white !important;
@@ -389,9 +391,10 @@ def borc_ekle(kid, mukellef_id, tur, tutar, son_odeme, durum):
 
 def ai_sor(soru):
     r = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.3-70b-versatile"
+        max_tokens=1024,
         messages=[
-            {"role": "system", "content": "Sen Türk vergi mevzuatı uzmanı bir mali müşavir asistanısın. Kısa ve net cevaplar ver."},
+            {"role": "system", "content": "Sen Türk vergi ve muhasebe mevzuatı konusunda uzman bir mali müşavir asistanısın. Türkçe, net ve pratik cevaplar ver. Kanun maddeleri, oranlar ve tarihler konusunda doğru bilgi sun. Eğer bir konuda emin değilsen belirt."},
             {"role": "user", "content": soru}
         ]
     )
