@@ -116,21 +116,22 @@ def gelir_grafigi(kid):
     if not r.data:
         return None
     df = pd.DataFrame(r.data)
-    # eklenme "dd.mm.yyyy" formatında
     try:
         df["tarih"] = pd.to_datetime(df["eklenme"], format="%d.%m.%Y", errors="coerce")
     except Exception:
         return None
     df = df.dropna(subset=["tarih"])
-    df["ay"] = df["tarih"].dt.to_period("M").astype(str)
+    df["ay"] = df["tarih"].dt.strftime("%Y-%m")
     ozet = df.groupby(["ay","odeme_durumu"])["ucret"].sum().reset_index()
     aylar = sorted(ozet["ay"].unique())[-6:]
     ozet = ozet[ozet["ay"].isin(aylar)]
     odendi   = ozet[ozet["odeme_durumu"]=="Ödendi"].set_index("ay")["ucret"]
     odenmedi = ozet[ozet["odeme_durumu"]=="Ödenmedi"].set_index("ay")["ucret"]
+    # Ay etiketlerini Türkçe göster
+    ay_etiket = {a: datetime.strptime(a, "%Y-%m").strftime("%b %Y") for a in aylar}
     fig = go.Figure()
-    fig.add_bar(x=aylar, y=[odendi.get(a,0) for a in aylar],   name="Tahsil Edildi",  marker_color="#38a169")
-    fig.add_bar(x=aylar, y=[odenmedi.get(a,0) for a in aylar], name="Tahsil Edilmedi", marker_color="#e53e3e")
+    fig.add_bar(x=[ay_etiket[a] for a in aylar], y=[odendi.get(a,0) for a in aylar],   name="Tahsil Edildi",  marker_color="#38a169")
+    fig.add_bar(x=[ay_etiket[a] for a in aylar], y=[odenmedi.get(a,0) for a in aylar], name="Tahsil Edilmedi", marker_color="#e53e3e")
     fig.update_layout(
         barmode="group",
         title="Son 6 Ay Gelir Durumu (TL)",
@@ -141,9 +142,10 @@ def gelir_grafigi(kid):
         legend=dict(orientation="h", y=1.1),
         plot_bgcolor="white",
         paper_bgcolor="white",
+        font=dict(color="#333333"),
     )
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(gridcolor="#f0f0f0")
+    fig.update_xaxes(showgrid=False, tickfont=dict(color="#333333"))
+    fig.update_yaxes(gridcolor="#f0f0f0", tickfont=dict(color="#333333"))
     return fig
 
 # ── Kritik uyarılar ───────────────────────────────────────────────────────────
@@ -269,7 +271,12 @@ else:
         uyarilar = kritik_uyarilar(df, bdf)
         if uyarilar:
             for tip, mesaj in uyarilar:
-                st.markdown(f'<div class="alert-box {tip}">{mesaj}</div>', unsafe_allow_html=True)
+                # HTML taglerini temizle
+                temiz = mesaj.replace("<b>","**").replace("</b>","**")
+                if tip == "red":
+                    st.error(temiz)
+                else:
+                    st.warning(temiz)
         else:
             st.success("✅ Kritik uyarı yok.")
 
