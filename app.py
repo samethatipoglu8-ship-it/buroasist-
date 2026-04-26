@@ -391,7 +391,7 @@ def borc_ekle(kid, mukellef_id, tur, tutar, son_odeme, durum):
 
 def ai_sor(soru):
     r = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile"
+        model="llama-3.3-70b-versatile",
         max_tokens=1024,
         messages=[
             {"role": "system", "content": "Sen Türk vergi ve muhasebe mevzuatı konusunda uzman bir mali müşavir asistanısın. Türkçe, net ve pratik cevaplar ver. Kanun maddeleri, oranlar ve tarihler konusunda doğru bilgi sun. Eğer bir konuda emin değilsen belirt."},
