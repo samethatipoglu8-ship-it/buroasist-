@@ -12,13 +12,273 @@ from reportlab.pdfgen import canvas
 from groq import Groq
 from supabase import create_client
 
-st.set_page_config(page_title="BuroAsist", page_icon="📋", layout="wide")
+st.set_page_config(page_title="BuroAsist", page_icon="⚖️", layout="wide")
 
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
+
+/* ── Global reset ── */
+html, body, [class*="css"] {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.main .block-container {
+    padding: 2rem 2.5rem 3rem 2.5rem;
+    max-width: 1400px;
+}
+
+/* ── Arka plan ── */
+.stApp {
+    background: #f8f7f4;
+}
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: #1a1a2e !important;
+    border-right: 1px solid #2d2d4e;
+}
+[data-testid="stSidebar"] * {
+    color: #e8e8f0 !important;
+}
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] .stNumberInput input,
+[data-testid="stSidebar"] .stSelectbox > div > div {
+    background: #2d2d4e !important;
+    border: 1px solid #3d3d6e !important;
+    color: #e8e8f0 !important;
+    border-radius: 8px !important;
+}
+[data-testid="stSidebar"] label {
+    color: #a8a8c8 !important;
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+}
+[data-testid="stSidebar"] .stButton button {
+    background: #4f46e5 !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: all 0.2s !important;
+}
+[data-testid="stSidebar"] .stButton button:hover {
+    background: #4338ca !important;
+    transform: translateY(-1px) !important;
+}
+
+/* ── Başlık alanı ── */
+h1 {
+    font-family: 'Instrument Serif', serif !important;
+    font-size: 2.2rem !important;
+    color: #1a1a2e !important;
+    font-weight: 400 !important;
+    letter-spacing: -0.02em !important;
+    margin-bottom: 0 !important;
+}
+h2, h3 {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #1a1a2e !important;
+    font-weight: 600 !important;
+}
+
+/* ── Metrik kartlar ── */
+[data-testid="stMetric"] {
+    background: white;
+    border: 1px solid #e8e4de;
+    border-radius: 14px;
+    padding: 1.2rem 1.4rem !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    transition: box-shadow 0.2s;
+}
+[data-testid="stMetric"]:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.75rem !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.06em !important;
+    color: #888 !important;
+}
+[data-testid="stMetricValue"] {
+    font-size: 1.6rem !important;
+    font-weight: 700 !important;
+    color: #1a1a2e !important;
+}
+
+/* ── Input alanları ── */
+.stTextInput input, .stNumberInput input {
+    background: white !important;
+    border: 1.5px solid #e0dbd3 !important;
+    border-radius: 10px !important;
+    padding: 0.6rem 0.9rem !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-size: 0.9rem !important;
+    color: #1a1a2e !important;
+    transition: border-color 0.2s !important;
+}
+.stTextInput input:focus, .stNumberInput input:focus {
+    border-color: #4f46e5 !important;
+    box-shadow: 0 0 0 3px rgba(79,70,229,0.1) !important;
+}
+
+/* ── Selectbox ── */
+.stSelectbox > div > div {
+    background: white !important;
+    border: 1.5px solid #e0dbd3 !important;
+    border-radius: 10px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+}
+
+/* ── Butonlar ── */
+.stButton button {
+    background: #1a1a2e !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    padding: 0.55rem 1.2rem !important;
+    transition: all 0.2s !important;
+    letter-spacing: 0.01em !important;
+}
+.stButton button:hover {
+    background: #2d2d4e !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(26,26,46,0.25) !important;
+}
+
+/* ── Download butonu ── */
+.stDownloadButton button {
+    background: white !important;
+    color: #1a1a2e !important;
+    border: 1.5px solid #e0dbd3 !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    transition: all 0.2s !important;
+}
+.stDownloadButton button:hover {
+    border-color: #4f46e5 !important;
+    color: #4f46e5 !important;
+}
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] {
+    background: white;
+    border-radius: 12px;
+    padding: 4px;
+    border: 1px solid #e8e4de;
+    gap: 2px;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    color: #666 !important;
+    padding: 0.5rem 1rem !important;
+}
+.stTabs [aria-selected="true"] {
+    background: #1a1a2e !important;
+    color: white !important;
+}
+
+/* ── Expander ── */
+.streamlit-expanderHeader {
+    background: white !important;
+    border: 1px solid #e8e4de !important;
+    border-radius: 12px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 600 !important;
+    color: #1a1a2e !important;
+    padding: 0.9rem 1.2rem !important;
+}
+.streamlit-expanderContent {
+    background: white !important;
+    border: 1px solid #e8e4de !important;
+    border-top: none !important;
+    border-radius: 0 0 12px 12px !important;
+    padding: 1.2rem !important;
+}
+
+/* ── Alert / info / success / error ── */
+.stAlert {
+    border-radius: 10px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    border: none !important;
+    font-size: 0.88rem !important;
+}
+
+/* ── Dataframe ── */
+[data-testid="stDataFrame"] {
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    border: 1px solid #e8e4de !important;
+}
+
+/* ── Chat ── */
+[data-testid="stChatMessage"] {
+    border-radius: 12px !important;
+    background: white !important;
+    border: 1px solid #e8e4de !important;
+    margin-bottom: 0.5rem !important;
+}
+.stChatInputContainer {
+    border-radius: 12px !important;
+    border: 1.5px solid #e0dbd3 !important;
+    background: white !important;
+}
+
+/* ── Divider ── */
+hr {
+    border-color: #ede9e2 !important;
+    margin: 1.2rem 0 !important;
+}
+
+/* ── Caption / small text ── */
+.stCaption {
+    color: #888 !important;
+    font-size: 0.8rem !important;
+}
+
+/* ── Form ── */
+[data-testid="stForm"] {
+    background: #faf9f6 !important;
+    border: 1px solid #e8e4de !important;
+    border-radius: 12px !important;
+    padding: 1rem !important;
+}
+
+/* ── Label ── */
+label {
+    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    color: #444 !important;
+}
+
+/* ── Subheader ── */
+.stSubheader {
+    color: #1a1a2e !important;
+    font-weight: 600 !important;
+}
+
+/* ── Mobile ── */
 @media (max-width: 768px) {
     .block-container { padding: 1rem !important; }
     div[data-testid="column"] { min-width: 100% !important; }
+    h1 { font-size: 1.6rem !important; }
+}
+
+/* ── Sidebar başlık ── */
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: #e8e8f0 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -292,8 +552,17 @@ if "kullanici" not in st.session_state:
 # GİRİŞ EKRANI
 # ═══════════════════════════════════════════════════════════════════════════════
 if st.session_state.kullanici is None:
-    st.title("📋 BuroAsist")
-    g, k = st.tabs(["Giriş Yap", "Kayıt Ol"])
+    st.markdown("""
+    <div style='text-align:center; padding: 3rem 0 1rem 0;'>
+        <div style='font-size:2.8rem; margin-bottom:0.5rem;'>⚖️</div>
+        <div style='font-family:"Instrument Serif",serif; font-size:2.8rem; color:#1a1a2e; font-weight:400; letter-spacing:-0.02em;'>BuroAsist</div>
+        <div style='color:#888; font-size:0.95rem; margin-top:0.4rem; font-family:"Plus Jakarta Sans",sans-serif;'>SMMM Büro Yönetim Platformu</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_l, col_m, col_r = st.columns([1, 1.2, 1])
+    with col_m:
+        g, k = st.tabs(["Giriş Yap", "Kayıt Ol"])
     with g:
         adi   = st.text_input("Kullanıcı Adı", key="g_adi")
         sifre = st.text_input("Şifre", type="password", key="g_sifre")
@@ -322,10 +591,15 @@ else:
     buro_adi = st.session_state.kullanici["buro_adi"]
 
     with st.sidebar:
-        st.write(f"👤 **{buro_adi}**")
-        st.caption(f"📅 {date.today().strftime('%d.%m.%Y')}")
+        st.markdown(f"""
+        <div style='padding:0.5rem 0 1rem 0;'>
+            <div style='font-size:1.3rem; font-weight:700; color:#e8e8f0; letter-spacing:-0.01em;'>⚖️ BuroAsist</div>
+            <div style='color:#a8a8c8; font-size:0.75rem; margin-top:4px; font-weight:500;'>{buro_adi}</div>
+            <div style='color:#6868a0; font-size:0.72rem; margin-top:2px;'>📅 {date.today().strftime('%d.%m.%Y')}</div>
+        </div>
+        """, unsafe_allow_html=True)
         st.divider()
-        st.subheader("Yeni Mükellef")
+        st.markdown("<div style='color:#a8a8c8; font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.8rem;'>+ YENİ MÜKELLEF</div>", unsafe_allow_html=True)
         isim            = st.text_input("Ad Soyad")
         vno             = st.text_input("Vergi No")
         tel             = st.text_input("Telefon")
@@ -345,7 +619,15 @@ else:
             st.session_state.kullanici = None
             st.rerun()
 
-    st.title(f"📋 BuroAsist — {buro_adi}")
+    st.markdown(f"""
+    <div style='display:flex; align-items:center; gap:1rem; margin-bottom:1.5rem; padding:1.2rem 1.5rem; background:white; border:1px solid #e8e4de; border-radius:14px; box-shadow:0 1px 4px rgba(0,0,0,0.04);'>
+        <div style='font-size:2rem;'>⚖️</div>
+        <div>
+            <div style='font-family:"Instrument Serif",serif; font-size:1.8rem; color:#1a1a2e; font-weight:400; line-height:1;'>BuroAsist</div>
+            <div style='color:#888; font-size:0.78rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; margin-top:3px;'>{buro_adi}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     df  = m_liste(kid)
     bdf = b_liste_genel(kid)
 
