@@ -1,5 +1,5 @@
 streamlit
 pandas
 groq
-psycopg2-binary
-sqlalchemy
+asyncpg
+sqlalchemy[asyncio]
