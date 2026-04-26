@@ -11,7 +11,7 @@ from email.mime.multipart import MIMEMultipart
 st.set_page_config(page_title="BuroAsist", page_icon="📋", layout="wide")
 
 client = Groq(api_key=st.secrets.get("GROQ_API_KEY", ""))
-db_url = st.secrets.get("DATABASE_URL", "").replace("postgresql://", "postgresql+psycopg2://")
+db_url = st.secrets.get("DATABASE_URL", "").replace("postgresql://", "postgresql+pg8000://")
 engine = create_engine(db_url)
 
 def db_init():
