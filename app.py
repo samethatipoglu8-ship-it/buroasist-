@@ -14,7 +14,6 @@ from supabase import create_client
 
 st.set_page_config(page_title="BuroAsist", page_icon="📋", layout="wide")
 
-# ── Mobil uyum CSS ────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @media (max-width: 768px) {
@@ -44,20 +43,23 @@ def giris(adi, sifre):
     r = sb.table("kullanicilar").select("*").eq("kullanici_adi", adi).eq("sifre", hashle(sifre)).execute()
     return r.data[0] if r.data else None
 
-def m_ekle(kid, isim, vno, tel, tur, ucret, email):
+def m_ekle(kid, isim, vno, tel, tur, ucret, email, defter_turu, efatura, sozlesme_tarihi):
     sb.table("mukellefler").insert({
         "kullanici_id": kid, "isim": isim, "vergi_no": vno,
         "telefon": tel, "tur": tur, "ucret": ucret, "email": email,
         "belge_durumu": "Bekleniyor", "odeme_durumu": "Ödenmedi",
-        "eklenme": datetime.now().strftime("%d.%m.%Y")
+        "eklenme": datetime.now().strftime("%d.%m.%Y"),
+        "defter_turu": defter_turu,
+        "efatura": efatura,
+        "sozlesme_tarihi": sozlesme_tarihi,
     }).execute()
 
 def m_liste(kid):
     r = sb.table("mukellefler").select("*").eq("kullanici_id", kid).execute()
-    return pd.DataFrame(r.data) if r.data else pd.DataFrame(columns=[
-        "id","kullanici_id","isim","vergi_no","telefon","tur",
-        "belge_durumu","ucret","odeme_durumu","email","eklenme"
-    ])
+    cols = ["id","kullanici_id","isim","vergi_no","telefon","tur",
+            "belge_durumu","ucret","odeme_durumu","email","eklenme",
+            "defter_turu","efatura","sozlesme_tarihi"]
+    return pd.DataFrame(r.data) if r.data else pd.DataFrame(columns=cols)
 
 def m_belge(mid, durum):
     sb.table("mukellefler").update({"belge_durumu": durum}).eq("id", mid).execute()
@@ -68,7 +70,7 @@ def m_odeme(mid, durum):
 def m_sil(mid):
     sb.table("mukellefler").delete().eq("id", mid).execute()
 
-def b_liste(kid):
+def b_liste_genel(kid):
     bugun = date.today()
     ay = bugun.strftime("%Y-%m")
     r = sb.table("beyannameler").select("*").eq("kullanici_id", kid).eq("ay", ay).execute()
@@ -85,6 +87,47 @@ def b_liste(kid):
 def b_guncelle(bid, durum):
     sb.table("beyannameler").update({"durum": durum}).eq("id", bid).execute()
 
+# Mükellef bazlı beyanname
+def mb_liste(kid, mukellef_id):
+    r = sb.table("mukellef_beyanname").select("*").eq("kullanici_id", kid).eq("mukellef_id", mukellef_id).order("ay", desc=True).execute()
+    return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+
+def mb_ekle(kid, mukellef_id, tur, ay, son_gun, durum, not_):
+    sb.table("mukellef_beyanname").insert({
+        "kullanici_id": kid, "mukellef_id": mukellef_id,
+        "beyanname_turu": tur, "ay": ay, "son_gun": son_gun,
+        "durum": durum, "not": not_
+    }).execute()
+
+# Görevler
+def gorev_liste(kid):
+    r = sb.table("gorevler").select("*").eq("kullanici_id", kid).order("son_gun").execute()
+    return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+
+def gorev_ekle(kid, baslik, mukellef_adi, son_gun, oncelik):
+    sb.table("gorevler").insert({
+        "kullanici_id": kid, "baslik": baslik,
+        "mukellef_adi": mukellef_adi, "son_gun": son_gun,
+        "oncelik": oncelik, "tamamlandi": False
+    }).execute()
+
+def gorev_tamamla(gid):
+    sb.table("gorevler").update({"tamamlandi": True}).eq("id", gid).execute()
+
+def gorev_sil(gid):
+    sb.table("gorevler").delete().eq("id", gid).execute()
+
+# Borç takibi
+def borc_liste(kid, mukellef_id):
+    r = sb.table("borc_takip").select("*").eq("kullanici_id", kid).eq("mukellef_id", mukellef_id).order("son_odeme").execute()
+    return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+
+def borc_ekle(kid, mukellef_id, tur, tutar, son_odeme, durum):
+    sb.table("borc_takip").insert({
+        "kullanici_id": kid, "mukellef_id": mukellef_id,
+        "tur": tur, "tutar": tutar, "son_odeme": son_odeme, "durum": durum
+    }).execute()
+
 def ai_sor(soru):
     r = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -95,7 +138,6 @@ def ai_sor(soru):
     )
     return r.choices[0].message.content
 
-# ── E-posta ───────────────────────────────────────────────────────────────────
 def mail_gonder(alici, konu, mesaj):
     try:
         msg = MIMEMultipart()
@@ -110,7 +152,6 @@ def mail_gonder(alici, konu, mesaj):
     except Exception as e:
         return str(e)
 
-# ── PDF makbuz ────────────────────────────────────────────────────────────────
 def pdf_makbuz(buro_adi, isim, ucret, ay):
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -136,7 +177,6 @@ def pdf_makbuz(buro_adi, isim, ucret, ay):
     buf.seek(0)
     return buf
 
-# ── Excel raporu ──────────────────────────────────────────────────────────────
 def excel_raporu(df):
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
@@ -146,7 +186,6 @@ def excel_raporu(df):
     buf.seek(0)
     return buf
 
-# ── Gelir grafiği ─────────────────────────────────────────────────────────────
 def gelir_grafigi(kid):
     r = sb.table("mukellefler").select("ucret,odeme_durumu,eklenme").eq("kullanici_id", kid).execute()
     if not r.data:
@@ -181,7 +220,6 @@ def gelir_grafigi(kid):
     fig.update_yaxes(gridcolor="#f0f0f0", tickfont=dict(color="#333333"))
     return fig
 
-# ── Kritik uyarılar ───────────────────────────────────────────────────────────
 def kritik_uyarilar(df, bdf):
     uyarilar = []
     bugun = date.today()
@@ -244,14 +282,17 @@ else:
         st.caption(f"📅 {date.today().strftime('%d.%m.%Y')}")
         st.divider()
         st.subheader("Yeni Mükellef")
-        isim  = st.text_input("Ad Soyad")
-        vno   = st.text_input("Vergi No")
-        tel   = st.text_input("Telefon")
-        email = st.text_input("Email")
-        tur   = st.selectbox("Tür", ["Şahıs", "Limited", "Anonim"])
-        ucret = st.number_input("Aylık Ücret (TL)", min_value=0, value=1500)
+        isim            = st.text_input("Ad Soyad")
+        vno             = st.text_input("Vergi No")
+        tel             = st.text_input("Telefon")
+        email           = st.text_input("Email")
+        tur             = st.selectbox("Tür", ["Şahıs", "Limited", "Anonim"])
+        defter_turu     = st.selectbox("Defter Türü", ["İşletme Defteri", "Bilanço"])
+        efatura         = st.selectbox("E-Fatura", ["Hayır", "Evet"])
+        sozlesme_tarihi = st.text_input("Sözleşme Tarihi (gg.aa.yyyy)")
+        ucret           = st.number_input("Aylık Ücret (TL)", min_value=0, value=1500)
         if st.button("➕ Ekle", use_container_width=True) and isim:
-            m_ekle(kid, isim, vno, tel, tur, ucret, email)
+            m_ekle(kid, isim, vno, tel, tur, ucret, email, defter_turu, efatura, sozlesme_tarihi)
             st.rerun()
         st.divider()
         if st.button("🚪 Çıkış", use_container_width=True):
@@ -260,7 +301,7 @@ else:
 
     st.title(f"📋 BuroAsist — {buro_adi}")
     df  = m_liste(kid)
-    bdf = b_liste(kid)
+    bdf = b_liste_genel(kid)
 
     toplam   = int(df["ucret"].sum()) if not df.empty else 0
     odendi_t = int(df[df.odeme_durumu=="Ödendi"]["ucret"].sum()) if not df.empty else 0
@@ -296,9 +337,9 @@ else:
 
     st.divider()
 
-    t1, t2, t3, t4, t5, t6 = st.tabs([
-        "📊 Mükellefler", "💰 Ücret Takibi", "📅 Beyanname",
-        "📱 WhatsApp", "📈 Rapor", "🤖 AI Asistan"
+    t1, t2, t3, t4, t5, t6, t7 = st.tabs([
+        "📊 Mükellefler", "📋 Görevler", "💰 Ücret Takibi",
+        "📅 Beyanname", "📱 WhatsApp", "📈 Rapor", "🤖 AI Asistan"
     ])
 
     # ── T1: Mükellefler ───────────────────────────────────────────────────────
@@ -306,15 +347,21 @@ else:
         if not df.empty:
             for _, r in df.iterrows():
                 with st.expander(f"{'🟡' if r.belge_durumu=='Bekleniyor' else '🟢'} {r.isim} — {r.tur} — {int(r.ucret):,} TL"):
-                    # Detaylar
-                    c1, c2 = st.columns(2)
+
+                    # Temel bilgiler
+                    c1, c2, c3 = st.columns(3)
                     c1.markdown(f"📞 **Telefon:** {r.telefon}")
-                    c1.markdown(f"📧 **Email:** {r.email if r.email else '—'}")
-                    c2.markdown(f"🔢 **Vergi No:** {r.vergi_no if r.vergi_no else '—'}")
+                    c1.markdown(f"📧 **Email:** {r.get('email','') or '—'}")
+                    c2.markdown(f"🔢 **Vergi No:** {r.get('vergi_no','') or '—'}")
                     c2.markdown(f"📅 **Eklenme:** {r.eklenme}")
+                    c3.markdown(f"📒 **Defter:** {r.get('defter_turu','—') or '—'}")
+                    c3.markdown(f"🧾 **E-Fatura:** {r.get('efatura','—') or '—'}")
+                    if r.get('sozlesme_tarihi'):
+                        c3.markdown(f"📝 **Sözleşme:** {r.sozlesme_tarihi}")
+
                     st.divider()
 
-                    # Durum güncelle + sil
+                    # Durum güncelle
                     d1, d2, d3 = st.columns([2,2,1])
                     with d1:
                         sec = st.selectbox("📁 Belge", ["Bekleniyor","Geldi"],
@@ -333,14 +380,47 @@ else:
                         if st.button("🗑️ Sil", key=f"s{r.id}", use_container_width=True):
                             m_sil(r.id); st.rerun()
 
-                    # Dosya yükleme (adım 10)
+                    # Mükellef bazlı beyanname geçmişi
+                    st.divider()
+                    st.markdown("**📅 Beyanname Geçmişi**")
+                    mbd = mb_liste(kid, r.id)
+                    if not mbd.empty:
+                        st.dataframe(mbd[["ay","beyanname_turu","son_gun","durum","not"]].rename(columns={
+                            "ay":"Ay","beyanname_turu":"Tür","son_gun":"Son Gün","durum":"Durum","not":"Not"
+                        }), use_container_width=True)
+                    with st.form(key=f"mbf{r.id}"):
+                        fc1, fc2, fc3 = st.columns(3)
+                        mb_tur = fc1.selectbox("Tür", ["KDV","Muhtasar","SGK","Damga Vergisi","Geçici Vergi","Stopaj","Diğer"])
+                        mb_ay  = fc2.text_input("Ay (yyyy-mm)", value=date.today().strftime("%Y-%m"))
+                        mb_sg  = fc3.text_input("Son Gün (yyyy-mm-dd)", value=date.today().strftime("%Y-%m-28"))
+                        mb_dur = st.selectbox("Durum", ["Bekliyor","Gönderildi","Gecikti"])
+                        mb_not = st.text_input("Not (opsiyonel)")
+                        if st.form_submit_button("➕ Beyanname Ekle"):
+                            mb_ekle(kid, r.id, mb_tur, mb_ay, mb_sg, mb_dur, mb_not)
+                            st.rerun()
+
+                    # Borç takibi
+                    st.divider()
+                    st.markdown("**💳 Vergi Borç Takibi**")
+                    borclar = borc_liste(kid, r.id)
+                    if not borclar.empty:
+                        st.dataframe(borclar[["tur","tutar","son_odeme","durum"]].rename(columns={
+                            "tur":"Tür","tutar":"Tutar (TL)","son_odeme":"Son Ödeme","durum":"Durum"
+                        }), use_container_width=True)
+                    with st.form(key=f"bf{r.id}"):
+                        bc1, bc2, bc3 = st.columns(3)
+                        b_tur  = bc1.selectbox("Borç Türü", ["KDV Borcu","SGK Borcu","Gelir Vergisi","Kurumlar Vergisi","Diğer"])
+                        b_tut  = bc2.number_input("Tutar (TL)", min_value=0)
+                        b_sg   = bc3.text_input("Son Ödeme (yyyy-mm-dd)")
+                        b_dur  = st.selectbox("Durum", ["Ödenmedi","Ödendi","Taksitli"])
+                        if st.form_submit_button("➕ Borç Ekle"):
+                            borc_ekle(kid, r.id, b_tur, b_tut, b_sg, b_dur)
+                            st.rerun()
+
+                    # Dosya yükleme
                     st.divider()
                     st.markdown("**📎 Dosya Yükle**")
-                    yukle = st.file_uploader(
-                        "PDF veya görsel yükle",
-                        type=["pdf","png","jpg","jpeg"],
-                        key=f"f{r.id}"
-                    )
+                    yukle = st.file_uploader("PDF veya görsel", type=["pdf","png","jpg","jpeg"], key=f"f{r.id}")
                     if yukle:
                         dosya_bytes = yukle.read()
                         dosya_yolu  = f"belgeler/{kid}/{r.id}/{yukle.name}"
@@ -353,8 +433,8 @@ else:
                         except Exception as e:
                             st.error(f"Hata: {e}")
 
-                    # Mail gönder (adım 3)
-                    if r.email:
+                    # Mail gönder
+                    if r.get("email"):
                         st.divider()
                         st.markdown("**📧 Mail Gönder**")
                         mail_konu = st.text_input("Konu", value="Belge Hatırlatması", key=f"mk{r.id}")
@@ -366,7 +446,7 @@ else:
                             if sonuc is True: st.success("✅ Mail gönderildi!")
                             else: st.error(f"Hata: {sonuc}")
 
-                    # PDF makbuz (adım 4)
+                    # PDF makbuz
                     st.divider()
                     ay_str  = date.today().strftime("%B %Y")
                     pdf_buf = pdf_makbuz(buro_adi, r.isim, r.ucret, ay_str)
@@ -380,8 +460,58 @@ else:
         else:
             st.info("Henüz mükellef eklenmedi.")
 
-    # ── T2: Ücret Takibi ──────────────────────────────────────────────────────
+    # ── T2: Görevler ──────────────────────────────────────────────────────────
     with t2:
+        st.subheader("📋 Görev & Hatırlatma")
+        bugun = date.today()
+
+        # Yeni görev ekle
+        with st.form("gorev_form"):
+            gc1, gc2, gc3, gc4 = st.columns([3,2,2,1])
+            g_baslik   = gc1.text_input("Görev")
+            g_mukellef = gc2.text_input("Mükellef (opsiyonel)")
+            g_tarih    = gc3.text_input("Son Gün (yyyy-mm-dd)", value=date.today().strftime("%Y-%m-%d"))
+            g_oncelik  = gc4.selectbox("Öncelik", ["Yüksek","Orta","Düşük"])
+            if st.form_submit_button("➕ Görev Ekle") and g_baslik:
+                gorev_ekle(kid, g_baslik, g_mukellef, g_tarih, g_oncelik)
+                st.rerun()
+
+        st.divider()
+        gorevler = gorev_liste(kid)
+        if not gorevler.empty:
+            bekleyenler = gorevler[gorevler.tamamlandi == False]
+            tamamlananlar = gorevler[gorevler.tamamlandi == True]
+
+            st.markdown("**⏳ Bekleyen Görevler**")
+            for _, r in bekleyenler.iterrows():
+                gc1, gc2, gc3, gc4, gc5 = st.columns([3,2,1,1,1])
+                gc1.write(f"**{r.baslik}**")
+                gc2.write(r.mukellef_adi or "—")
+                try:
+                    kalan = (date.fromisoformat(r.son_gun) - bugun).days
+                    if kalan < 0: gc3.error(f"⛔ {abs(kalan)}g geçti")
+                    elif kalan == 0: gc3.warning("⚠️ Bugün!")
+                    else: gc3.success(f"✅ {kalan}g")
+                except:
+                    gc3.write(r.son_gun)
+                oncelik_renk = {"Yüksek":"🔴","Orta":"🟡","Düşük":"🟢"}.get(r.oncelik, "⚪")
+                gc4.write(f"{oncelik_renk} {r.oncelik}")
+                if gc5.button("✓", key=f"gt{r.id}"):
+                    gorev_tamamla(r.id); st.rerun()
+
+            if not tamamlananlar.empty:
+                st.divider()
+                st.markdown("**✅ Tamamlananlar**")
+                for _, r in tamamlananlar.iterrows():
+                    gc1, gc2 = st.columns([5,1])
+                    gc1.write(f"~~{r.baslik}~~ — {r.mukellef_adi or ''}")
+                    if gc2.button("🗑️", key=f"gs{r.id}"):
+                        gorev_sil(r.id); st.rerun()
+        else:
+            st.info("Henüz görev eklenmedi.")
+
+    # ── T3: Ücret Takibi ──────────────────────────────────────────────────────
+    with t3:
         st.subheader("💰 Ücret Takibi")
         if not df.empty:
             odenmemis = df[df.odeme_durumu=="Ödenmedi"]
@@ -398,9 +528,9 @@ else:
         else:
             st.info("Mükellef yok")
 
-    # ── T3: Beyanname ─────────────────────────────────────────────────────────
-    with t3:
-        st.subheader("📅 Beyanname Takvimi")
+    # ── T4: Beyanname ─────────────────────────────────────────────────────────
+    with t4:
+        st.subheader("📅 Genel Beyanname Takvimi")
         bugun = date.today()
         if not bdf.empty:
             for _, r in bdf.iterrows():
@@ -421,8 +551,8 @@ else:
                         b_guncelle(r.id, yeni); st.rerun()
                 st.divider()
 
-    # ── T4: WhatsApp ─────────────────────────────────────────────────────────
-    with t4:
+    # ── T5: WhatsApp ─────────────────────────────────────────────────────────
+    with t5:
         st.subheader("📱 Belge Hatırlatma")
         if not df.empty:
             bek = df[df.belge_durumu=="Bekleniyor"]
@@ -436,8 +566,8 @@ else:
         else:
             st.info("Mükellef yok")
 
-    # ── T5: Rapor ─────────────────────────────────────────────────────────────
-    with t5:
+    # ── T6: Rapor ─────────────────────────────────────────────────────────────
+    with t6:
         st.subheader("📈 Aylık Gelir Raporu")
         if not df.empty:
             col1, col2, col3 = st.columns(3)
@@ -467,8 +597,8 @@ else:
         else:
             st.info("Henüz veri yok.")
 
-    # ── T6: AI Asistan ───────────────────────────────────────────────────────
-    with t6:
+    # ── T7: AI Asistan ───────────────────────────────────────────────────────
+    with t7:
         st.subheader("🤖 Mevzuat ve Vergi Asistanı")
         if "mesajlar" not in st.session_state:
             st.session_state.mesajlar = []
