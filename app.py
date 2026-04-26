@@ -21,6 +21,23 @@ st.markdown("""
 /* ── Global reset ── */
 html, body, [class*="css"] {
     font-family: 'Plus Jakarta Sans', sans-serif;
+    color: #1a1a2e;
+}
+
+/* ── Tüm yazılar koyu renk ── */
+p, span, div, li, td, th, label, a, h1, h2, h3, h4, h5, h6,
+.stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown div,
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] span,
+[data-testid="stText"] {
+    color: #1a1a2e !important;
+}
+
+/* ── White bg elementlerde yazı koyu kalsın ── */
+.streamlit-expanderContent *,
+[data-testid="stForm"] *,
+[data-testid="stExpander"] * {
+    color: #1a1a2e !important;
 }
 
 .main .block-container {
